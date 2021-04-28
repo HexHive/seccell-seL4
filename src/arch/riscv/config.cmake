@@ -27,6 +27,12 @@ config_option(
     DEPENDS "KernelArchRiscV"
 )
 
+config_option(
+    KernelSecCell RISCV_SECCELL "RISCV extension for secure cells"
+    DEFAULT OFF
+    DEPENDS "KernelArchRiscV"
+)
+
 # Until RISC-V has instructions to count leading/trailing zeros, we provide
 # library implementations. Platforms that implement the bit manipulation
 # extension can override these settings to remove the library functions from
