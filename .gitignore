@@ -27,3 +27,5 @@ manual/generated
 
 # Emacs backups
 *~
+
+build*/
