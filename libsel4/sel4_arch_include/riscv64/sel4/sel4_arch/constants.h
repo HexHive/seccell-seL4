@@ -39,6 +39,9 @@
 #define seL4_PageTableBits     12
 #define seL4_VSpaceBits        seL4_PageTableBits
 
+#define seL4_SecCellsPPNBits   44
+#define seL4_SecCellsVPNBits   36
+
 #define seL4_NumASIDPoolsBits   7
 #define seL4_ASIDPoolIndexBits  9
 #define seL4_ASIDPoolBits       12

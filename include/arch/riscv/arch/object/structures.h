@@ -61,6 +61,10 @@ typedef pte_t pde_t;
 #define PTE_SIZE_BITS   seL4_PageTableEntryBits
 #define PT_INDEX_BITS   seL4_PageTableIndexBits
 
+#define RT_PPN_BITS     seL4_SecCellsPPNBits
+#define RT_VPN_BITS     seL4_SecCellsVPNBits
+#define RT_PTR(r)       ((rtcell_t *)(r))
+
 #define WORD_BITS   (8 * sizeof(word_t))
 #define WORD_PTR(r) ((word_t *)(r))
 
@@ -129,6 +133,12 @@ static inline void *CONST cap_get_archCapPtr(cap_t cap)
 
     case cap_page_table_cap:
         return PT_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
+
+    case cap_range_cap:
+        return (void *)(cap_range_cap_get_capRBasePtr(cap));
+
+    case cap_range_table_cap:
+        return RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
 
     case cap_asid_control_cap:
         return NULL;

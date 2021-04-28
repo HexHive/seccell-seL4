@@ -10,9 +10,14 @@
 #include <autoconf.h>
 
 typedef enum _object {
+    // TODO: #ifndef CONFIG_RISCV_SECCELL as soon as no reference to pages exists anymore
     seL4_RISCV_4K_Page = seL4_ModeObjectTypeCount,
     seL4_RISCV_Mega_Page,
     seL4_RISCV_PageTableObject,
+#ifdef CONFIG_RISCV_SECCELL
+    seL4_RISCV_RangeObject,
+    seL4_RISCV_RangeTableObject,
+#endif /* CONFIG_RISCV_SECCELL */
     seL4_ObjectTypeCount
 } seL4_ArchObjectType;
 

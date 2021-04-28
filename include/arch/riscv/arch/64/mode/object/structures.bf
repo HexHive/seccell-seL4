@@ -46,6 +46,32 @@ block page_table_cap {
     field_high  capPTMappedAddress  39
 }
 
+-- SecCell permission table / range table
+block range_table_cap {
+    field       capRTMappedASID     16
+    field_high  capRTBasePtr        39
+    padding                         9
+
+    field       capType             5
+    padding                         19
+    field       capRTIsMapped       1
+    field_high  capRTMappedAddress  39
+}
+
+-- SecCell cell / range
+block range_cap {
+    field       capRMappedASID      16
+    field_high  capRBasePtr         39
+    field       capRVMRights        2
+    field       capRIsDevice        1
+    padding                         6
+
+    field       capType             5
+    field       capRSize            27
+    padding                         5
+    field_high  capRMappedAddress   27
+}
+
 -- Cap to the table of 2^6 ASID pools
 block asid_control_cap {
     padding 64
@@ -86,6 +112,8 @@ tagged_union cap capType {
     -- 5-bit tag arch caps
     tag frame_cap           1
     tag page_table_cap      3
+    tag range_cap           5
+    tag range_table_cap     7
     tag asid_control_cap    11
     tag asid_pool_cap       13
 }
@@ -141,6 +169,29 @@ block satp {
     field mode          4
     field asid          16
     field ppn           44
+}
+
+-- RISC-V SecureCells cell format
+-- vpn_end and vpn_end_top together result in the actual VPN address, they have
+-- to be split up to comply with 64 bit word boundaries
+block rtcell {
+    padding                12
+    field ppn              44
+    field vpn_end_top      8
+    field vpn_end          28
+    field vpn_start        36
+}
+
+block rtperm {
+    padding 56
+    field dirty            1
+    field accessed         1
+    field global           1
+    padding                1
+    field exec             1
+    field write            1
+    field read             1
+    field valid            1
 }
 
 #include <sel4/arch/shared_types.bf>
