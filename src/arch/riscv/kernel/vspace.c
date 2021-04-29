@@ -34,6 +34,14 @@ struct resolve_ret {
 };
 typedef struct resolve_ret resolve_ret_t;
 
+#ifdef CONFIG_RISCV_SECCELL
+typedef struct {
+    size_t R, /* required number of 64-byte cache lines */
+           S, /* 2^n aligned number of 64-byte cache lines */
+           T; /* space per SecDiv to track cell access rights */
+} rt_parameters_t;
+#endif /* CONFIG_RISCV_SECCELL */
+
 static exception_t performPageGetAddress(void *vbase_ptr);
 
 static word_t CONST RISCVGetWriteFromVMRights(vm_rights_t vm_rights)
@@ -80,6 +88,74 @@ static pte_t pte_next(word_t phys_addr, bool_t is_leaf)
                    1      /* valid */
                   );
 }
+
+#ifdef CONFIG_RISCV_SECCELL
+static rtcell_t rtcell_new_helper(uint64_t vpn_start, uint64_t vpn_end, uint64_t ppn)
+{
+    /* Get rid of bit-extensions */
+    vpn_end = vpn_end & MASK(RT_VPN_BITS);
+    vpn_start = vpn_start & MASK(RT_VPN_BITS);
+    ppn = ppn & MASK(RT_PPN_BITS);
+
+    /*
+     * Calculate position after which vpn_end is split in the bitfield block,
+     * c.f. include/arch/riscv/arch/64/mode/object/structures.bf
+     * TODO: Improve calculation => currently based on inherent knowledge of
+     * block size (blocks built of uint64_t words)
+     */
+    size_t split = (sizeof(uint64_t) * 8) - RT_VPN_BITS;
+    return rtcell_new(ppn, vpn_end >> split, vpn_end & ((1ull << split) - 1), vpn_start);
+}
+
+static rt_parameters_t get_rt_parameters(unsigned cell_count)
+{
+    size_t S = 1;
+    size_t R = (cell_count * sizeof(rtcell_t) / 64) + 1;
+    while (S < R) {
+        S <<= 1;
+    }
+    /* Note: permissions use uint8_t, minimum is 64 bytes */
+    size_t T = MAX(64 / sizeof(rtcell_t) * S, 64);
+
+    return (rt_parameters_t) {R, S, T};
+}
+
+static unsigned int rt_cell_count(rtcell_t *rt)
+{
+    unsigned int count = 0;
+
+    /* End is marked with a cell structure that has all bits set to 1 */
+    while ((rt + count)->words[0] != -1ull || (rt + count)->words[1] != -1ull) {
+        /* Increment counter as long as we haven't reached the end */
+        count++;
+    }
+
+    return count;
+}
+
+static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, unsigned int n_secdiv_ids)
+{
+    rt_parameters_t old_params = get_rt_parameters(cell_count);
+    rt_parameters_t new_params = get_rt_parameters(cell_count + 1);
+
+    /* Only resize if it is even necessary */
+    if (old_params.S != new_params.S) {
+        for (unsigned int i = 0; i < n_secdiv_ids; i++) {
+            /* Start from the end to not overwrite other data */
+            unsigned int secdiv_id = n_secdiv_ids - i - 1;
+
+            uint8_t *old_perms = (uint8_t *)(rt) + (64 * old_params.S) + (old_params.T * secdiv_id);
+            uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (new_params.T * secdiv_id);
+
+            /* Copy permissions to new location */
+            /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled */
+            memcpy(new_perms, old_perms, cell_count);
+        }
+        /* Clear (now unused) region used by old permissions */
+        memset(((uint8_t *)rt) + (64 * old_params.S), 0, 64 * (new_params.S - old_params.S));
+    }
+}
+#endif
 
 /* ==================== BOOT CODE STARTS HERE ==================== */
 

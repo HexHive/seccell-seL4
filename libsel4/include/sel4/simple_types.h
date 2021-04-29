@@ -20,7 +20,7 @@
  * ILP64  | 16    | 64  | 64   | 64   | 64     | SPARC64, Solaris
  * SILP64 | 64    | 64  | 64   | 64   | 64     | UNICOS
  *
- * libsel4 requires ILP32 on 32-bit systems and and LP64 on 64-bit systems
+ * libsel4 requires ILP32 on 32-bit systems and LP64 on 64-bit systems
  */
 
 /* Get the architectural definitions and types */

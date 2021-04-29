@@ -24,6 +24,8 @@ typedef word_t cpu_id_t;
 typedef word_t node_id_t;
 typedef word_t dom_t;
 
+typedef unsigned long size_t;
+
 /* for libsel4 headers that the kernel shares */
 typedef word_t seL4_Word;
 typedef cptr_t seL4_CPtr;
