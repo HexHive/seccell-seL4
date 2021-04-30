@@ -156,6 +156,11 @@ BOOT_CODE static word_t calculate_rootserver_size(v_region_t v_reg, word_t extra
 #ifdef CONFIG_KERNEL_MCS
     size += BIT(seL4_MinSchedContextBits); // root sched context
 #endif
+#ifdef CONFIG_RISCV_SECCELL
+    /* TODO: uncomment / replace => don't want to break everything right now */
+    /* since some parts still rely on paging structures */
+    /* return size + BIT(seL4_PageTableBits); */
+#endif /* CONFIG_RISCV_SECCELL */
     /* for all archs, seL4_PageTable Bits is the size of all non top-level paging structures */
     return size + arch_get_n_paging(v_reg) * BIT(seL4_PageTableBits);
 }

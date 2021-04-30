@@ -24,6 +24,10 @@ NODE_STATE_END(archNodeState);
 
 extern asid_pool_t *riscvKSASIDTable[BIT(asidHighBits)];
 
+#ifdef CONFIG_RISCV_SECCELL
+/* Kernel permission / range table */
+extern rtcell_t kernel_root_rangeTable[BIT(PT_INDEX_BITS)] VISIBLE;
+#endif /* CONFIG_RISCV_SECCELL */
 /* Kernel Page Tables */
 extern pte_t kernel_root_pageTable[BIT(PT_INDEX_BITS)] VISIBLE;
 

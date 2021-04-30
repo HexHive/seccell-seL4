@@ -16,6 +16,9 @@ void map_it_pt_cap(cap_t vspace_cap, cap_t pt_cap);
 void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap);
 void map_kernel_window(void);
 void map_kernel_frame(paddr_t paddr, pptr_t vaddr, vm_rights_t vm_rights);
+#ifdef CONFIG_RISCV_SECCELL
+void map_kernel_range(paddr_t paddr, pptr_t vaddr, size_t size);
+#endif /* CONFIG_RISCV_SECCELL */
 void activate_kernel_vspace(void);
 void write_it_asid_pool(cap_t it_ap_cap, cap_t it_lvl1pt_cap);
 

@@ -45,3 +45,8 @@ typedef struct kernel_frame {
     int userAvailable;
 } kernel_frame_t;
 
+#ifdef CONFIG_RISCV_SECCELL
+/* TODO: look into whether we need to change this implementation, for now just define an alias */
+typedef kernel_frame_t kernel_range_t;
+#endif /* CONFIG_RISCV_SECCELL */
+

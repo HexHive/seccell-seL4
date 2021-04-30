@@ -420,6 +420,11 @@ BOOT_CODE VISIBLE void init_kernel(
 #endif
 )
 {
+#ifdef CONFIG_RISCV_SECCELL
+/* Check for compile time prerequisites */
+_Static_assert(__riscv_xlen == 64, "Currently, only 64-bit RISC-V is supported");
+#endif
+
     bool_t result;
     paddr_t dtb_end_p = 0;
 

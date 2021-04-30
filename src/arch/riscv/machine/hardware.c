@@ -54,6 +54,19 @@ BOOT_CODE void map_kernel_devices(void)
         return;
     }
 
+#ifdef CONFIG_RISCV_SECCELL
+    for (int i = 0; i < (sizeof(kernel_devices) / sizeof(kernel_range_t)); i++) {
+        /* TODO: evaluate and change actually needed size instead of seL4_LargePageBits */
+        map_kernel_range(kernel_devices[i].paddr, kernel_devices[i].pptr, 1ull << seL4_LargePageBits);
+        if (!kernel_devices[i].userAvailable) {
+            p_region_t reg = {
+                .start = kernel_devices[i].paddr,
+                .end = kernel_devices[i].paddr + (1ull << seL4_LargePageBits),
+            };
+            reserve_region(reg);
+        }
+    }
+#else
     for (int i = 0; i < (sizeof(kernel_devices) / sizeof(kernel_frame_t)); i++) {
         map_kernel_frame(kernel_devices[i].paddr, kernel_devices[i].pptr,
                          VMKernelOnly);
@@ -65,6 +78,7 @@ BOOT_CODE void map_kernel_devices(void)
             reserve_region(reg);
         }
     }
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 /*

@@ -179,8 +179,73 @@ BOOT_CODE void map_kernel_frame(paddr_t paddr, pptr_t vaddr, vm_rights_t vm_righ
 #endif
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+BOOT_CODE void map_kernel_range(paddr_t paddr, pptr_t vaddr, size_t size)
+{
+    unsigned int cell_count = rt_cell_count(kernel_root_rangeTable);
+    rt_parameters_t params;
+    uint8_t *perms;
+    /* TODO: get rid of hardcoded 21 => currently only alignment on 2MiB by rounding */
+    paddr = ROUND_DOWN(paddr, 21);
+    assert((paddr % BIT(21)) == 0);
+    /* Only 1 SecDiv so far: the kernel itself */
+    rt_resize_inc(kernel_root_rangeTable, cell_count, 1);
+
+    cell_count++;
+    params = get_rt_parameters(cell_count);
+    perms = ((uint8_t *)kernel_root_rangeTable) + (params.S * 64);
+
+    /* Map the range in the permission / range table */
+    kernel_root_rangeTable[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
+                                                               (vaddr + size - 1) >> seL4_PageBits,
+                                                               paddr >> seL4_PageBits);
+    perms[cell_count - 1] = (uint8_t)rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0];
+
+    /* Mark end of cell list in the permission table */
+    kernel_root_rangeTable[cell_count].words[0] = -1ull;
+    kernel_root_rangeTable[cell_count].words[1] = -1ull;
+}
+#endif /* CONFIG_RISCV_SECCELL */
+
 BOOT_CODE VISIBLE void map_kernel_window(void)
 {
+#ifdef CONFIG_RISCV_SECCELL
+    /* Two cells for now: one for the kernel ELF image, one for the remaining physical memory */
+    unsigned int cell_count = 2;
+    rt_parameters_t params = get_rt_parameters(cell_count);
+    uint8_t *perms = ((uint8_t *)kernel_root_rangeTable) + (params.S * 64);
+
+    /* Recall:                                                   */
+    /* KERNEL_ELF_BASE = first kernel ELF virtual address        */
+    /* KDEV_BASE = first device virtual address                  */
+    /* KERNEL_ELF_PADDR_BASE = first kernel ELF physical address */
+    kernel_root_rangeTable[0] = rtcell_new_helper(KERNEL_ELF_BASE >> seL4_PageBits,
+                                                  (KDEV_BASE - 1) >> seL4_PageBits,
+                                                  KERNEL_ELF_PADDR_BASE >> seL4_PageBits);
+    perms[0] = (uint8_t)rtperm_new(1, /* dirty    */
+                                   1, /* accessed */
+                                   0, /* global   */
+                                   1, /* exec     */
+                                   1, /* write    */
+                                   1, /* read     */
+                                   1  /* valid    */).words[0];
+
+    /* Recall:                                                               */
+    /* PPTR_BASE = first virtual address of kernels physical memory window   */
+    /* PPTR_TOP = first virtual address after kernels physical memory window */
+    /* PADDR_BASE = first physical address of kernels physical memory window */
+    kernel_root_rangeTable[1] = rtcell_new_helper(PPTR_BASE >> seL4_PageBits,
+                                                  (PPTR_TOP - 1) >> seL4_PageBits,
+                                                  PADDR_BASE >> seL4_PageBits);
+    perms[1] = (uint8_t)rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0];
+
+    /* Mark end of cell list in the permission table */
+    kernel_root_rangeTable[2].words[0] = -1ull;
+    kernel_root_rangeTable[2].words[1] = -1ull;
+
+    /* Map kernel devices into their region: KDEV_BASE to 2^64 - 1 */
+    map_kernel_devices();
+#else
     /* mapping of KERNEL_ELF_BASE (virtual address) to kernel's
      * KERNEL_ELF_PHYS_BASE  */
     assert(CONFIG_PT_LEVELS > 1 && CONFIG_PT_LEVELS <= 4);
@@ -236,6 +301,7 @@ BOOT_CODE VISIBLE void map_kernel_window(void)
     /* There should be 1GiB free where we put device mapping */
     assert(pptr == UINTPTR_MAX - RISCV_GET_LVL_PGSIZE(0) + 1);
     map_kernel_devices();
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 BOOT_CODE void map_it_pt_cap(cap_t vspace_cap, cap_t pt_cap)
@@ -378,7 +444,11 @@ BOOT_CODE cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_re
 
 BOOT_CODE void activate_kernel_vspace(void)
 {
+#ifdef CONFIG_RISCV_SECCELL
+    setVSpaceRoot(kpptr_to_paddr(&kernel_root_rangeTable), 0);
+#else
     setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 BOOT_CODE void write_it_asid_pool(cap_t it_ap_cap, cap_t it_lvl1pt_cap)
