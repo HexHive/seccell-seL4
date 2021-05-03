@@ -14,6 +14,9 @@
 cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_reg);
 void map_it_pt_cap(cap_t vspace_cap, cap_t pt_cap);
 void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap);
+#ifdef CONFIG_RISCV_SECCELL
+void map_it_range_cap(cap_t vspace_cap, cap_t range_cap);
+#endif /* CONFIG_RISCV_SECCELL */
 void map_kernel_window(void);
 void map_kernel_frame(paddr_t paddr, pptr_t vaddr, vm_rights_t vm_rights);
 #ifdef CONFIG_RISCV_SECCELL
@@ -38,11 +41,15 @@ typedef struct lookupPTSlot_ret lookupPTSlot_ret_t;
 
 struct findVSpaceForASID_ret {
     exception_t status;
-    pte_t *vspace_root;
+    vspace_root_t *vspace_root;
 };
 typedef struct findVSpaceForASID_ret findVSpaceForASID_ret_t;
 
+#ifdef CONFIG_RISCV_SECCELL
+void copyGlobalMappings(rtcell_t *newRt);
+#else
 void copyGlobalMappings(pte_t *newlvl1pt);
+#endif /* CONFIG_RISCV_SECCELL */
 word_t *PURE lookupIPCBuffer(bool_t isReceiver, tcb_t *thread);
 lookupPTSlot_ret_t lookupPTSlot(pte_t *lvl1pt, vptr_t vptr);
 exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType);

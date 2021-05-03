@@ -13,6 +13,9 @@
 cap_t create_unmapped_it_frame_cap(pptr_t pptr, bool_t use_large);
 cap_t create_mapped_it_frame_cap(cap_t pd_cap, pptr_t pptr, vptr_t vptr, asid_t asid, bool_t use_large,
                                  bool_t executable);
+#ifdef CONFIG_RISCV_SECCELL
+cap_t create_mapped_it_range_cap(cap_t rt_cap, pptr_t pptr, vptr_t vptr, word_t length, asid_t asid);
+#endif /* CONFIG_RISCV_SECCELL */
 
 void init_kernel(
     paddr_t ui_p_reg_start,

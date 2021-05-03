@@ -208,6 +208,9 @@ BOOT_CODE void create_rootserver_objects(pptr_t start, v_region_t v_reg, word_t 
 #endif
 
     /* paging structures are 4k on every arch except aarch32 (1k) */
+    /* Note: this is never even used on RISC-V SecCells but we don't remove it for now
+       to not mess with later assertions and memory alignment */
+    /* TODO: remove paging memory objects */
     word_t n = arch_get_n_paging(v_reg);
     rootserver.paging.start = alloc_rootserver_obj(seL4_PageTableBits, n);
     rootserver.paging.end = rootserver.paging.start + n * BIT(seL4_PageTableBits);
@@ -354,13 +357,25 @@ BOOT_CODE create_frames_of_region_ret_t create_frames_of_region(
     sword_t  pv_offset
 )
 {
+#ifdef CONFIG_RISCV_SECCELL
+    cap_t      range_cap;
+#else
     pptr_t     f;
     cap_t      frame_cap;
+#endif /* CONFIG_RISCV_SECCELL */
     seL4_SlotPos slot_pos_before;
     seL4_SlotPos slot_pos_after;
 
     slot_pos_before = ndks_boot.slot_pos_cur;
 
+#ifdef CONFIG_RISCV_SECCELL
+    range_cap = create_mapped_it_range_cap(pd_cap, reg.start,
+                                           pptr_to_paddr((void *)(reg.start - pv_offset)),
+                                           reg.end - reg.start, IT_ASID);
+    if (!provide_cap(root_cnode_cap, range_cap)) {
+        return (create_frames_of_region_ret_t) {S_REG_EMPTY, false};
+    }
+#else
     for (f = reg.start; f < reg.end; f += BIT(PAGE_BITS)) {
         if (do_map) {
             frame_cap = create_mapped_it_frame_cap(pd_cap, f, pptr_to_paddr((void *)(f - pv_offset)), IT_ASID, false, true);
@@ -372,7 +387,7 @@ BOOT_CODE create_frames_of_region_ret_t create_frames_of_region(
             S_REG_EMPTY, false
         };
     }
-
+#endif /* CONFIG_RISCV_SECCELL */
     slot_pos_after = ndks_boot.slot_pos_cur;
 
     return (create_frames_of_region_ret_t) {

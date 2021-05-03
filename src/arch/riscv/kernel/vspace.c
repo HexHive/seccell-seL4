@@ -336,6 +336,32 @@ BOOT_CODE void map_it_pt_cap(cap_t vspace_cap, cap_t pt_cap)
 
 BOOT_CODE void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap)
 {
+#ifdef CONFIG_RISCV_SECCELL
+    rtcell_t *rt = RT_PTR(pptr_of_cap(vspace_cap));
+    pptr_t frame_pptr = pptr_of_cap(frame_cap);
+    vptr_t frame_vptr = cap_frame_cap_get_capFMappedAddress(frame_cap);
+
+    unsigned cell_count = rt_cell_count(rt);
+    /* Resize range table if required */
+    rt_resize_inc(rt, cell_count, IT_ASID + 1);
+    /* Add cell */
+    cell_count++;
+    rt[cell_count - 1] = rtcell_new_helper(frame_vptr >> seL4_PageBits,
+                                           frame_vptr >> seL4_PageBits,
+                                           pptr_to_paddr((void *)frame_pptr) >> seL4_PageBits);
+    /* Add invalid cell to mark the end of the cell list in the range table */
+    rt[cell_count].words[0] = -1ull;
+    rt[cell_count].words[1] = -1ull;
+
+    rt_parameters_t params = get_rt_parameters(cell_count);
+
+    uint8_t *kern_perms = (uint8_t *)(rt) + (params.S * 64);
+    uint8_t *asid_perms = kern_perms + (params.T * IT_ASID);
+    /* Both kernel(supervisor) and user asid get same permissions since
+     * mstatus.SUM = 0 in the standard port */
+    kern_perms[cell_count - 1] = asid_perms[cell_count - 1] =
+        (uint8_t)(rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0]);
+#else
     pte_t *lvl1pt   = PTE_PTR(pptr_of_cap(vspace_cap));
     pte_t *frame_pptr   = PTE_PTR(pptr_of_cap(frame_cap));
     vptr_t frame_vptr = cap_frame_cap_get_capFMappedAddress(frame_cap);
@@ -358,8 +384,39 @@ BOOT_CODE void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap)
                       1,  /* read */
                       1   /* valid */
                   );
+#endif /* CONFIG_RISCV_SECCELL */
     sfence();
 }
+
+#ifdef CONFIG_RISCV_SECCELL
+void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
+    rtcell_t *rt = RT_PTR(pptr_of_cap(vspace_cap));
+    pptr_t frame_pptr = pptr_of_cap(range_cap);
+    vptr_t frame_vptr = cap_range_cap_get_capRMappedAddress(range_cap);
+    word_t size = cap_range_cap_get_capRSize(range_cap);
+
+    unsigned int cell_count = rt_cell_count(rt);
+    /* Resize range table if required */
+    rt_resize_inc(rt, cell_count, IT_ASID + 1);
+    cell_count++;
+    /* Add cell */
+    rt[cell_count - 1] = rtcell_new_helper(frame_vptr >> seL4_PageBits,
+                                           ((frame_vptr + size - 1) >> seL4_PageBits),
+                                           pptr_to_paddr((void *)frame_pptr) >> seL4_PageBits);
+
+    /* Add permissions for newly created cell */
+    rt_parameters_t params = get_rt_parameters(cell_count);
+    uint8_t *kern_perms = (uint8_t *)(rt) + (params.S * 64);
+    uint8_t *asid_perms = kern_perms + (params.T * IT_ASID);
+    /* Both kernel (supervisor) and user asid get same permissions */
+    kern_perms[cell_count - 1] = asid_perms[cell_count - 1] =
+        (uint8_t)(rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0]);
+
+    /* Add invalid cell to mark the end of the cell list in the range table */
+    rt[cell_count].words[0] = -1ull;
+    rt[cell_count].words[1] = -1ull;
+}
+#endif /* CONFIG_RISCV_SECCELL */
 
 BOOT_CODE cap_t create_unmapped_it_frame_cap(pptr_t pptr, bool_t use_large)
 {
@@ -375,6 +432,7 @@ BOOT_CODE cap_t create_unmapped_it_frame_cap(pptr_t pptr, bool_t use_large)
     return cap;
 }
 
+#ifndef CONFIG_RISCV_SECCELL
 /* Create a page table for the initial thread */
 static BOOT_CODE cap_t create_it_pt_cap(cap_t vspace_cap, pptr_t pptr, vptr_t vptr, asid_t asid)
 {
@@ -389,6 +447,7 @@ static BOOT_CODE cap_t create_it_pt_cap(cap_t vspace_cap, pptr_t pptr, vptr_t vp
     map_it_pt_cap(vspace_cap, cap);
     return cap;
 }
+#endif
 
 BOOT_CODE word_t arch_get_n_paging(v_region_t it_v_reg)
 {
@@ -403,6 +462,32 @@ BOOT_CODE word_t arch_get_n_paging(v_region_t it_v_reg)
  * This includes page directory and page tables */
 BOOT_CODE cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_reg)
 {
+#ifdef CONFIG_RISCV_SECCELL
+    /* Only create the mappings for kernel memory now, and add a cap for the
+     * range table. The rest will be setup when frames are allocated */
+    cap_t rt_cap;
+    rt_cap = cap_range_table_cap_new(
+            IT_ASID,                    /* capRTMappedASID    */
+            (word_t) rootserver.vspace, /* capRTBasePtr       */
+            1,                          /* capRTIsMapped      */
+            (word_t) rootserver.vspace  /* capRTMappedAddress */
+        );
+
+    copyGlobalMappings(RT_PTR(rootserver.vspace));
+
+    /* Ensure that IT_ASID has no access to previously mapped kernel cells */
+    unsigned int cell_count = rt_cell_count(RT_PTR(rootserver.vspace));
+    rt_parameters_t params = get_rt_parameters(cell_count);
+    uint8_t *it_perms = (uint8_t *)(rootserver.vspace + (params.S * 64) + (params.T * IT_ASID));
+    memset(it_perms, 0, cell_count);
+
+    write_slot(SLOT_PTR(pptr_of_cap(root_cnode_cap), seL4_CapInitThreadVSpace), rt_cap);
+    ndks_boot.bi_frame->userImagePaging = (seL4_SlotRegion) {
+        ndks_boot.slot_pos_cur, ndks_boot.slot_pos_cur
+    };
+
+    return rt_cap;
+#else
     cap_t      lvl1pt_cap;
     vptr_t     pt_vptr;
 
@@ -440,6 +525,7 @@ BOOT_CODE cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_re
     };
 
     return lvl1pt_cap;
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 BOOT_CODE void activate_kernel_vspace(void)
@@ -489,6 +575,16 @@ static findVSpaceForASID_ret_t findVSpaceForASID(asid_t asid)
     return ret;
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+void copyGlobalMappings(rtcell_t *newRt)
+{
+    /* TODO: calculate amount of memory to copy based on range table parameters
+     * For now, assume it fits into one page
+     * unsigned int cell_count = rt_cell_count(kernel_root_rangeTable);
+     * rt_parameters_t params = get_rt_parameters(cell_count); */
+    memcpy(newRt, kernel_root_rangeTable, BIT(seL4_PageBits));
+}
+#else
 void copyGlobalMappings(pte_t *newLvl1pt)
 {
     unsigned long i;
@@ -498,6 +594,7 @@ void copyGlobalMappings(pte_t *newLvl1pt)
         newLvl1pt[i] = global_kernel_vspace[i];
     }
 }
+#endif /* CONFIG_RISCV_SECCELL */
 
 word_t *PURE lookupIPCBuffer(bool_t isReceiver, tcb_t *thread)
 {
@@ -622,15 +719,23 @@ static exception_t performASIDControlInvocation(void *frame, cte_t *slot, cte_t 
 static exception_t performASIDPoolInvocation(asid_t asid, asid_pool_t *poolPtr, cte_t *vspaceCapSlot)
 {
     cap_t cap = vspaceCapSlot->cap;
+#ifdef CONFIG_RISCV_SECCELL
+    rtcell_t *regionBase = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+    cap = cap_range_table_cap_set_capRTMappedASID(cap, asid);
+    cap = cap_range_table_cap_set_capRTMappedAddress(cap, 0);
+    cap = cap_range_table_cap_set_capRTIsMapped(cap, 1);
+#else
     pte_t *regionBase = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
     cap = cap_page_table_cap_set_capPTMappedASID(cap, asid);
     cap = cap_page_table_cap_set_capPTMappedAddress(cap, 0);
     cap = cap_page_table_cap_set_capPTIsMapped(cap, 1);
+#endif /* CONFIG_RISCV_SECCELL */
     vspaceCapSlot->cap = cap;
 
     copyGlobalMappings(regionBase);
 
-    poolPtr->array[asid & MASK(asidLowBits)] = regionBase;
+    /* TODO: Remove cast => make array a rtcell_t in case of SecCells */
+    poolPtr->array[asid & MASK(asidLowBits)] = PTE_PTR(regionBase);
 
     return EXCEPTION_NONE;
 }
@@ -723,26 +828,41 @@ void setVMRoot(tcb_t *tcb)
 {
     cap_t threadRoot;
     asid_t asid;
+#ifdef CONFIG_RISCV_SECCELL
+    rtcell_t *rt;
+#endif /* CONFIG_RISCV_SECCELL */
     pte_t *lvl1pt;
     findVSpaceForASID_ret_t  find_ret;
 
     threadRoot = TCB_PTR_CTE_PTR(tcb, tcbVTable)->cap;
 
-    if (cap_get_capType(threadRoot) != cap_page_table_cap) {
-        setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
-        return;
+    if (cap_get_capType(threadRoot) == cap_page_table_cap) {
+        lvl1pt = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(threadRoot));
+
+        asid = cap_page_table_cap_get_capPTMappedASID(threadRoot);
+        find_ret = findVSpaceForASID(asid);
+        if (unlikely(find_ret.status != EXCEPTION_NONE || find_ret.vspace_root != lvl1pt)) {
+            setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
+            return;
+        }
+
+        setVSpaceRoot(addrFromPPtr(lvl1pt), asid);
     }
+#ifdef CONFIG_RISCV_SECCELL
+    else if (cap_get_capType(threadRoot) == cap_range_table_cap) {
+        rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(threadRoot));
 
-    lvl1pt = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(threadRoot));
+        /* TODO: The ASID should actually be determined otherwise */
+        /* On syscall, it would be the return ID */
+        /* On IPC, it would be the target's ASID */
+        asid = cap_range_table_cap_get_capRTMappedASID(threadRoot);
 
-    asid = cap_page_table_cap_get_capPTMappedASID(threadRoot);
-    find_ret = findVSpaceForASID(asid);
-    if (unlikely(find_ret.status != EXCEPTION_NONE || find_ret.vspace_root != lvl1pt)) {
-        setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
-        return;
+        setVSpaceRoot(addrFromPPtr(rt), asid);
     }
-
-    setVSpaceRoot(addrFromPPtr(lvl1pt), asid);
+#endif /* CONFIG_RISCV_SECCELL */
+    else {
+        setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
+    }
 }
 
 bool_t CONST isValidVTableRoot(cap_t cap)
@@ -904,7 +1024,7 @@ static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
     lookupPTSlot_ret_t lu_ret = lookupPTSlot(lvl1pt, vaddr);
 
     /* if there is already something mapped (valid is set) or we have traversed far enough
-     * that a page table is not valid to map then tell the user that they ahve to delete
+     * that a page table is not valid to map then tell the user that they have to delete
      * something before they can put a PT here */
     if (lu_ret.ptBitsLeft == seL4_PageBits || pte_ptr_get_valid(lu_ret.ptSlot)) {
         userError("RISCVPageTableMap: All objects mapped at this address");

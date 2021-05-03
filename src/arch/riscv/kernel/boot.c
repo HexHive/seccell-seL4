@@ -55,11 +55,15 @@ BOOT_CODE cap_t create_mapped_it_frame_cap(cap_t pd_cap, pptr_t pptr, vptr_t vpt
     cap_t cap;
     vm_page_size_t frame_size;
 
+#ifdef CONFIG_RISCV_SECCELL
+    frame_size = RISCV_4K_Page;
+#else
     if (use_large) {
         frame_size = RISCV_Mega_Page;
     } else {
         frame_size = RISCV_4K_Page;
     }
+#endif /* CONFIG_RISCV_SECCELL */
 
     cap = cap_frame_cap_new(
               asid,                            /* capFMappedASID       */
@@ -73,6 +77,24 @@ BOOT_CODE cap_t create_mapped_it_frame_cap(cap_t pd_cap, pptr_t pptr, vptr_t vpt
     map_it_frame_cap(pd_cap, cap);
     return cap;
 }
+
+#ifdef CONFIG_RISCV_SECCELL
+BOOT_CODE cap_t create_mapped_it_range_cap(cap_t rt_cap, pptr_t pptr, vptr_t vptr, word_t length, asid_t asid)
+{
+    cap_t cap = cap_range_cap_new(
+                    asid,                           /* capRMappedASID       */
+                    pptr,                           /* capRBasePtr          */
+                    wordFromVMRights(VMReadWrite),  /* capRVMRights         */
+                    0,                              /* capRIsDevice         */
+                    length,                         /* capRSize             */
+                    vptr                            /* capRMappedAddress    */
+                );
+
+    map_it_range_cap(rt_cap, cap);
+
+    return cap;
+}
+#endif /* CONFIG_RISCV_SECCELL */
 
 BOOT_CODE static void arch_init_freemem(region_t ui_reg, v_region_t ui_v_reg,
                                         region_t dtb_reg, word_t extra_bi_size_bits)
@@ -423,7 +445,7 @@ BOOT_CODE VISIBLE void init_kernel(
 #ifdef CONFIG_RISCV_SECCELL
 /* Check for compile time prerequisites */
 _Static_assert(__riscv_xlen == 64, "Currently, only 64-bit RISC-V is supported");
-#endif
+#endif /* CONFIG_RISCV_SECCELL */
 
     bool_t result;
     paddr_t dtb_end_p = 0;
