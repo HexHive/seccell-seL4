@@ -24,6 +24,8 @@
 #define SATP_MODE_SV32 1
 #define SATP_MODE_SV39 8
 #define SATP_MODE_SV48 9
+/* SecCell mode is encoded as 15 because this was chosen in QEMU */
+#define SATP_MODE_SEC  15
 
 #ifndef __ASSEMBLER__
 

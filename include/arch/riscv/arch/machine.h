@@ -189,7 +189,11 @@ static inline void write_fcsr(uint32_t value)
 #if CONFIG_PT_LEVELS == 2
 #define SATP_MODE SATP_MODE_SV32
 #elif CONFIG_PT_LEVELS == 3
+#ifdef CONFIG_RISCV_SECCELL
+#define SATP_MODE SATP_MODE_SEC
+#else
 #define SATP_MODE SATP_MODE_SV39
+#endif /* CONFIG_RISCV_SECCELL */
 #elif CONFIG_PT_LEVELS == 4
 #define SATP_MODE SATP_MODE_SV48
 #else
