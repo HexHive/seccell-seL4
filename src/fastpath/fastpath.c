@@ -106,7 +106,11 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
 #ifdef CONFIG_ARCH_RISCV
     /* Get HW ASID */
+#ifdef CONFIG_RISCV_SECCELL
+    stored_hw_asid.words[0] = getRegister(dest, ReturnUID);
+#else
     stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
+#endif /* CONFIG_RISCV_SECCELL */
 #endif
 
     /* let gcc optimise this out for 1 domain */
@@ -360,7 +364,11 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 
 #ifdef CONFIG_ARCH_RISCV
+#ifdef CONFIG_RISCV_SECCELL
+    stored_hw_asid.words[0] = getRegister(caller, ReturnUID);
+#else
     stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
+#endif /* CONFIG_RISCV_SECCELL */
 #endif
 
     /* Ensure the original caller can be scheduled directly. */

@@ -80,6 +80,12 @@ void VISIBLE NORETURN restore_user_context(void)
         /* get sepc */
         LOAD_S "  t1, (34*%[REGSIZE])(t0)\n"
         "csrw sepc, t1  \n"
+#ifdef CONFIG_RISCV_SECCELL
+        /* Get URID */
+        LOAD_S "  t1, (35*%[REGSIZE])(t0)\n"
+        "csrw urid, t1  \n"
+#endif /* CONFIG_RISCV_SECCELL */
+
 #ifndef ENABLE_SMP_SUPPORT
         /* Write back sscratch with cur_thread_reg to get it back on the next trap entry */
         "csrw sscratch, t0         \n"

@@ -66,6 +66,9 @@ enum _register {
     SSTATUS = 32,
     FaultIP = 33, /* SEPC */
     NextIP = 34,
+#ifdef CONFIG_RISCV_SECCELL
+    ReturnUID = 35,
+#endif /* CONFIG_RISCV_SECCELL */
 
     /* TODO: add other user-level CSRs if needed (i.e. to avoid channels) */
 
@@ -120,6 +123,12 @@ static inline void Arch_initContext(user_context_t *context)
 {
     /* Enable supervisor interrupts (when going to user-mode) */
     context->registers[SSTATUS] = SSTATUS_SPIE;
+#ifdef CONFIG_RISCV_SECCELL
+    /* Assumption: initial return ASID is IT_ASID = 1 */
+    /* TODO: Actually put a constant here => currently causes include problems */
+    /* Also reason about whether this assumption is always true */
+    context->registers[ReturnUID] = 1;
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 static inline word_t CONST sanitiseRegister(register_t reg, word_t v, bool_t archInfo)

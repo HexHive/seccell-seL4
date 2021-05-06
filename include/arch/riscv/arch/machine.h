@@ -125,6 +125,20 @@ static inline void write_stvec(word_t value)
     asm volatile("csrw stvec, %0" :: "rK"(value));
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+static inline void write_urid(word_t asid)
+{
+    asm volatile("csrw urid, %0" :: "rK"(asid));
+}
+
+static inline word_t read_urid(void)
+{
+    word_t temp;
+    asm volatile("csrr %0, urid" : "=r"(temp));
+    return temp;
+}
+#endif /* CONFIG_RISCV_SECCELL */
+
 static inline word_t read_stval(void)
 {
     word_t temp;
@@ -206,6 +220,9 @@ static inline void setVSpaceRoot(paddr_t addr, asid_t asid)
                            addr >> seL4_PageBits); /* PPN */
 
     write_satp(satp.words[0]);
+#ifdef CONFIG_RISCV_SECCELL
+    write_urid(asid);
+#endif /* CONFIG_RISCV_SECCELL */
 
     /* Order read/write operations */
 #ifdef ENABLE_SMP_SUPPORT

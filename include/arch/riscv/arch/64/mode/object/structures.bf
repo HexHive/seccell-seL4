@@ -48,7 +48,7 @@ block page_table_cap {
 
 -- SecCell permission table / range table
 block range_table_cap {
-    field       capRTMappedASID     16
+    padding                         16
     field_high  capRTBasePtr        39
     padding                         9
 

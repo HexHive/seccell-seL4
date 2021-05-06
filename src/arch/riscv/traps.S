@@ -94,6 +94,12 @@ trap_entry:
   la sp, (kernel_stack_alloc + BIT(CONFIG_KERNEL_STACK_BITS))
 #endif
 
+#ifdef CONFIG_RISCV_SECCELL
+  /* Save URID */
+  csrr x1,  urid
+  STORE x1, (35*REGBYTES)(t0)
+#endif /* CONFIG_RISCV_SECCELL */
+
   /* Save exception PC */
   csrr x1,  sepc
   STORE   x1, (33*REGBYTES)(t0)

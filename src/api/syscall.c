@@ -374,6 +374,11 @@ static exception_t handleInvocation(bool_t isCall, bool_t isBlocking)
     exception_t status;
     word_t length;
     tcb_t *thread;
+#ifdef CONFIG_RISCV_SECCELL
+    word_t urid UNUSED;
+    /* TODO: actually use the URID */
+    urid = read_urid();
+#endif /* CONFIG_RISCV_SECCELL */
 
     thread = NODE_STATE(ksCurThread);
 

@@ -467,7 +467,6 @@ BOOT_CODE cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_re
      * range table. The rest will be setup when frames are allocated */
     cap_t rt_cap;
     rt_cap = cap_range_table_cap_new(
-            IT_ASID,                    /* capRTMappedASID    */
             (word_t) rootserver.vspace, /* capRTBasePtr       */
             1,                          /* capRTIsMapped      */
             (word_t) rootserver.vspace  /* capRTMappedAddress */
@@ -721,7 +720,6 @@ static exception_t performASIDPoolInvocation(asid_t asid, asid_pool_t *poolPtr, 
     cap_t cap = vspaceCapSlot->cap;
 #ifdef CONFIG_RISCV_SECCELL
     rtcell_t *regionBase = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
-    cap = cap_range_table_cap_set_capRTMappedASID(cap, asid);
     cap = cap_range_table_cap_set_capRTMappedAddress(cap, 0);
     cap = cap_range_table_cap_set_capRTIsMapped(cap, 1);
 #else
@@ -852,10 +850,7 @@ void setVMRoot(tcb_t *tcb)
     else if (cap_get_capType(threadRoot) == cap_range_table_cap) {
         rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(threadRoot));
 
-        /* TODO: The ASID should actually be determined otherwise */
-        /* On syscall, it would be the return ID */
-        /* On IPC, it would be the target's ASID */
-        asid = cap_range_table_cap_get_capRTMappedASID(threadRoot);
+        asid = getRegister(tcb, ReturnUID);
 
         setVSpaceRoot(addrFromPPtr(rt), asid);
     }
