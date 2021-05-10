@@ -34,9 +34,13 @@ NORETURN;
 
 /* Use macros to not break verification */
 #define endpoint_ptr_get_epQueue_tail_fp(ep_ptr) TCB_PTR(endpoint_ptr_get_epQueue_tail(ep_ptr))
+#ifdef CONFIG_RISCV_SECCELL
+#define cap_vtable_cap_get_vspace_root_fp(vtable_cap) RT_PTR(cap_range_table_cap_get_capRTBasePtr(vtable_cap))
+#else
 #define cap_vtable_cap_get_vspace_root_fp(vtable_cap) PTE_PTR(cap_page_table_cap_get_capPTBasePtr(vtable_cap))
+#endif /* CONFIG_RISCV_SECCELL */
 
-static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, pte_t *vroot, pte_t stored_hw_asid)
+static inline void FORCE_INLINE switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, vspace_root_t stored_hw_asid)
 {
     asid_t asid = (asid_t)(stored_hw_asid.words[0]);
 

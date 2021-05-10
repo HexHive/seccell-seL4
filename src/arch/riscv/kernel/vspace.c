@@ -548,8 +548,8 @@ BOOT_CODE void write_it_asid_pool(cap_t it_ap_cap, cap_t it_lvl1pt_cap)
 static findVSpaceForASID_ret_t findVSpaceForASID(asid_t asid)
 {
     findVSpaceForASID_ret_t ret;
-    asid_pool_t        *poolPtr;
-    pte_t     *vspace_root;
+    asid_pool_t *poolPtr;
+    vspace_root_t *vspace_root;
 
     poolPtr = riscvKSASIDTable[asid >> asidLowBits];
     if (!poolPtr) {
@@ -560,7 +560,7 @@ static findVSpaceForASID_ret_t findVSpaceForASID(asid_t asid)
         return ret;
     }
 
-    vspace_root = poolPtr->array[asid & MASK(asidLowBits)];
+    vspace_root = VR_PTR(poolPtr->array[asid & MASK(asidLowBits)]);
     if (!vspace_root) {
         current_lookup_fault = lookup_fault_invalid_root_new();
 
@@ -758,9 +758,9 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
         return;
     }
     /* We won't ever unmap a top level page table */
-    assert(find_ret.vspace_root != target_pt);
+    assert(PTE_PTR(find_ret.vspace_root) != target_pt);
     pte_t *ptSlot = NULL;
-    pte_t *pt = find_ret.vspace_root;
+    pte_t *pt = PTE_PTR(find_ret.vspace_root);
 
     for (word_t i = 0; i < CONFIG_PT_LEVELS - 1 && pt != target_pt; i++) {
         ptSlot = pt + RISCV_GET_PT_INDEX(vptr, i);
@@ -809,7 +809,7 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
         return;
     }
 
-    lu_ret = lookupPTSlot(find_ret.vspace_root, vptr);
+    lu_ret = lookupPTSlot(PTE_PTR(find_ret.vspace_root), vptr);
     if (unlikely(lu_ret.ptBitsLeft != pageBitsForSize(page_size))) {
         return;
     }
@@ -839,7 +839,7 @@ void setVMRoot(tcb_t *tcb)
 
         asid = cap_page_table_cap_get_capPTMappedASID(threadRoot);
         find_ret = findVSpaceForASID(asid);
-        if (unlikely(find_ret.status != EXCEPTION_NONE || find_ret.vspace_root != lvl1pt)) {
+        if (unlikely(find_ret.status != EXCEPTION_NONE || PTE_PTR(find_ret.vspace_root) != lvl1pt)) {
             setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
             return;
         }
@@ -949,7 +949,7 @@ static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
             findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
             pte_t *pte = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
             if (unlikely(find_ret.status == EXCEPTION_NONE &&
-                         find_ret.vspace_root == pte)) {
+                         PTE_PTR(find_ret.vspace_root) == pte)) {
                 userError("RISCVPageTableUnmap: cannot call unmap on top level PageTable");
                 current_syscall_error.type = seL4_RevokeFirst;
                 return EXCEPTION_SYSCALL_ERROR;
@@ -1009,7 +1009,7 @@ static exception_t decodeRISCVPageTableInvocation(word_t label, word_t length,
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    if (unlikely(find_ret.vspace_root != lvl1pt)) {
+    if (unlikely(PTE_PTR(find_ret.vspace_root) != lvl1pt)) {
         userError("RISCVPageTableMap: ASID lookup failed");
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 1;
@@ -1090,7 +1090,7 @@ static exception_t decodeRISCVFrameInvocation(word_t label, word_t length,
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        if (unlikely(find_ret.vspace_root != lvl1pt)) {
+        if (unlikely(PTE_PTR(find_ret.vspace_root) != lvl1pt)) {
             userError("RISCVPageMap: ASID lookup failed");
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 1;

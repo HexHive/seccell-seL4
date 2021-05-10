@@ -44,7 +44,11 @@ enum vm_rights {
 };
 typedef word_t vm_rights_t;
 
+#ifdef CONFIG_RISCV_SECCELL
+typedef rtcell_t vspace_root_t;
+#else
 typedef pte_t vspace_root_t;
+#endif /* CONFIG_RISCV_SECCELL */
 
 /* Generic fastpath.c code expects pde_t for stored_hw_asid
  * that's a workaround in the time being.
@@ -64,6 +68,8 @@ typedef pte_t pde_t;
 #define RT_PPN_BITS     seL4_SecCellsPPNBits
 #define RT_VPN_BITS     seL4_SecCellsVPNBits
 #define RT_PTR(r)       ((rtcell_t *)(r))
+
+#define VR_PTR(r)       ((vspace_root_t *)(r))
 
 #define WORD_BITS   (8 * sizeof(word_t))
 #define WORD_PTR(r) ((word_t *)(r))

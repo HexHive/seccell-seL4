@@ -122,7 +122,7 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
             asid_t asid = cap_page_table_cap_get_capPTMappedASID(cap);
             findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
             pte_t *pte = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
-            if (find_ret.status == EXCEPTION_NONE && find_ret.vspace_root == pte) {
+            if (find_ret.status == EXCEPTION_NONE && PTE_PTR(find_ret.vspace_root) == pte) {
                 deleteASID(asid, pte);
             } else {
                 unmapPageTable(asid, cap_page_table_cap_get_capPTMappedAddress(cap), pte);
@@ -150,7 +150,7 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
             findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
             /* TODO: Remove PTE_PTR casts when rtcell_t pointers can also be passed */
-            if (find_ret.status == EXCEPTION_NONE && find_ret.vspace_root == PTE_PTR(rt)) {
+            if (find_ret.status == EXCEPTION_NONE && RT_PTR(find_ret.vspace_root) == rt) {
                 deleteASID(asid, PTE_PTR(rt));
             }
         }

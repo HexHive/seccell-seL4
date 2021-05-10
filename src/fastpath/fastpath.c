@@ -31,7 +31,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     word_t badge;
     cap_t newVTable;
     vspace_root_t *cap_pd;
-    pde_t stored_hw_asid;
+    vspace_root_t stored_hw_asid;
     word_t fault_type;
     dom_t dom;
 
@@ -248,7 +248,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
     cap_t newVTable;
     vspace_root_t *cap_pd;
-    pde_t stored_hw_asid;
+    vspace_root_t stored_hw_asid;
     dom_t dom;
 
     /* Get message info and length */
