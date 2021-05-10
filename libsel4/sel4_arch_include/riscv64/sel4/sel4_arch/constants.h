@@ -41,6 +41,8 @@
 
 #define seL4_SecCellsPPNBits   44
 #define seL4_SecCellsVPNBits   36
+#define seL4_MinRangeBits      12
+#define seL4_MaxRangeBits      (seL4_SecCellsVPNBits + seL4_MinRangeBits)
 
 #define seL4_NumASIDPoolsBits   7
 #define seL4_ASIDPoolIndexBits  9

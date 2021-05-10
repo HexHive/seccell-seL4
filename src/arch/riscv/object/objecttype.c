@@ -37,6 +37,26 @@ deriveCap_ret_t Arch_deriveCap(cte_t *slot, cap_t cap)
         ret.status = EXCEPTION_NONE;
         return ret;
 
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_table_cap:
+        if (cap_range_table_cap_get_capRTIsMapped(cap)) {
+            ret.cap = cap;
+            ret.status = EXCEPTION_NONE;
+        } else {
+            userError("Deriving an unmapped RT cap");
+            current_syscall_error.type = seL4_IllegalOperation;
+            ret.cap = cap_null_cap_new();
+            ret.status = EXCEPTION_SYSCALL_ERROR;
+        }
+        return ret;
+
+    case cap_range_cap:
+        cap = cap_range_cap_set_capRMappedAddress(cap, 0);
+        ret.cap = cap_range_cap_set_capRMappedASID(cap, asidInvalid);
+        ret.status = EXCEPTION_NONE;
+        return ret;
+#endif /* CONFIG_RISCV_SECCELL */
+
     case cap_asid_control_cap:
     case cap_asid_pool_cap:
         ret.cap = cap;
@@ -63,6 +83,14 @@ cap_t CONST Arch_maskCapRights(seL4_CapRights_t cap_rights_mask, cap_t cap)
         vm_rights = vmRightsFromWord(cap_frame_cap_get_capFVMRights(cap));
         vm_rights = maskVMRights(vm_rights, cap_rights_mask);
         return cap_frame_cap_set_capFVMRights(cap, wordFromVMRights(vm_rights));
+#ifdef CONFIG_RISCV_SECCELL
+    } else if (cap_get_capType(cap) == cap_range_cap) {
+        vm_rights_t vm_rights;
+
+        vm_rights = vmRightsFromWord(cap_range_cap_get_capRVMRights(cap));
+        vm_rights = maskVMRights(vm_rights, cap_rights_mask);
+        return cap_range_cap_set_capRVMRights(cap, wordFromVMRights(vm_rights));
+#endif /* CONFIG_RISCV_SECCELL */
     } else {
         return cap;
     }
@@ -101,6 +129,33 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
             }
         }
         break;
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_cap:
+        /* TODO: Currently no support for unmapping => want to find the permissions */
+        /* in the range table and set it to invalid */
+        /* if (cap_range_cap_get_capRMappedASID(cap)) {
+            unmapRange(cap_range_cap_get_capRSize(cap),
+                       cap_range_cap_get_capRMappedASID(cap),
+                       cap_range_cap_get_capRMappedAddress(cap),
+                       cap_range_cap_get_capRBasePtr(cap));
+        } */
+        break;
+    case cap_range_table_cap:
+        if (final && cap_range_table_cap_get_capRTIsMapped(cap)) {
+            /*
+             * RangeTables are always mapped as vspace_root => delete it from
+             * the ASID pool
+             */
+            asid_t asid = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+            findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+            /* TODO: Remove PTE_PTR casts when rtcell_t pointers can also be passed */
+            if (find_ret.status == EXCEPTION_NONE && find_ret.vspace_root == PTE_PTR(rt)) {
+                deleteASID(asid, PTE_PTR(rt));
+            }
+        }
+        break;
+#endif /* CONFIG_RISCV_SECCELL */
     case cap_asid_pool_cap:
         if (final) {
             deleteASIDPool(
@@ -137,6 +192,27 @@ bool_t CONST Arch_sameRegionAs(cap_t cap_a, cap_t cap_b)
                    cap_page_table_cap_get_capPTBasePtr(cap_b);
         }
         break;
+
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_cap:
+        if (cap_get_capType(cap_b) == cap_range_cap) {
+            word_t botA, botB, topA, topB;
+            botA = cap_range_cap_get_capRBasePtr(cap_a);
+            botB = cap_range_cap_get_capRBasePtr(cap_b);
+            topA = botA + cap_range_cap_get_capRSize(cap_a);
+            topB = botB + cap_range_cap_get_capRSize(cap_b);
+            return ((botA <= botB) && (topA >= topB) && (botB <= topB));
+        }
+        break;
+
+    case cap_range_table_cap:
+        if (cap_get_capType(cap_b) == cap_range_table_cap) {
+            return cap_range_table_cap_get_capRTBasePtr(cap_a) ==
+                   cap_range_table_cap_get_capRTBasePtr(cap_b);
+        }
+        break;
+#endif /* CONFIG_RISCV_SECCELL */
+
     case cap_asid_control_cap:
         if (cap_get_capType(cap_b) == cap_asid_control_cap) {
             return true;
@@ -174,6 +250,11 @@ word_t Arch_getObjectSize(word_t t)
     switch (t) {
     case seL4_RISCV_4K_Page:
     case seL4_RISCV_PageTableObject:
+#ifdef CONFIG_RISCV_SECCELL
+    /* Assumption: RangeTable fits in a single page */
+    /* TODO: Adapt to generic case without assumptions */
+    case seL4_RISCV_RangeTableObject:
+#endif /* CONFIG_RISCV_SECCELL */
         return seL4_PageBits;
     case seL4_RISCV_Mega_Page:
         return seL4_LargePageBits;
@@ -184,6 +265,10 @@ word_t Arch_getObjectSize(word_t t)
 #if CONFIG_PT_LEVELS > 3
     case seL4_RISCV_Tera_Page:
         return seL4_TeraPageBits;
+#endif
+#ifdef CONFIG_RISCV_SECCELL
+    case seL4_RISCV_RangeObject:
+        return seL4_MaxRangeBits;
 #endif
     default:
         fail("Invalid object type");
@@ -278,6 +363,24 @@ cap_t Arch_createObject(object_t t, void *regionBase, word_t userSize, bool_t
                    0                       /* capPTMappedAddress */
                );
 
+#ifdef CONFIG_RISCV_SECCELL
+    case seL4_RISCV_RangeObject:
+        return cap_range_cap_new(
+                   asidInvalid,                    /* capRMappedASID       */
+                   (word_t) regionBase,            /* capRBasePtr          */
+                   wordFromVMRights(VMReadWrite),  /* capRVMRights         */
+                   deviceMemory,                   /* capRIsDevice         */
+                   userSize,                       /* capRSize             */
+                   0                               /* capRMappedAddress    */
+               );
+    case seL4_RISCV_RangeTableObject:
+        return cap_range_table_cap_new(
+                   (word_t)regionBase,     /* capRTBasePtr       */
+                   0,                      /* capRTIsMapped      */
+                   0                       /* capRTMappedAddress */
+               );
+#endif /* CONFIG_RISCV_SECCELL */
+
     default:
         /*
          * This is a conflation of the haskell error: "Arch.createNewCaps
@@ -311,6 +414,9 @@ void Arch_prepareThreadDelete(tcb_t *thread)
 bool_t Arch_isFrameType(word_t type)
 {
     switch (type) {
+#ifdef CONFIG_RISCV_SECCELL
+    case seL4_RISCV_RangeObject:
+#endif /* CONFIG_RISCV_SECCELL */
 #if CONFIG_PT_LEVELS == 4
     case seL4_RISCV_Tera_Page:
 #endif
