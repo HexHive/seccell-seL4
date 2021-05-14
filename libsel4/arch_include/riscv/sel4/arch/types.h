@@ -14,6 +14,8 @@
 
 typedef seL4_CPtr seL4_RISCV_Page;
 typedef seL4_CPtr seL4_RISCV_PageTable;
+typedef seL4_CPtr seL4_RISCV_Range;
+typedef seL4_CPtr seL4_RISCV_RangeTable;
 typedef seL4_CPtr seL4_RISCV_ASIDControl;
 typedef seL4_CPtr seL4_RISCV_ASIDPool;
 

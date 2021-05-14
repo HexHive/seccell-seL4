@@ -126,6 +126,70 @@
             <param dir="out" name="paddr" type="seL4_Word"/>
         </method>
     </interface>
+    <interface name="seL4_RISCV_Range" manual_name="Range" cap_description="Capability to the range / secure cell to invoke.">
+        <method id="RISCVRangeMap" name="Map">
+            <brief>
+                Map a range into the range table.
+            </brief>
+            <description>
+                Takes a VSpace, or <texttt text="Range Table"/>, capability as an argument and installs a reference
+                to the given <texttt text="Range"/> in the range table slot corresponding to the given address.
+                If a range is already mapped at the same virtual address, update the mapping attributes.
+                If the required range table is not present this operation will fail, returning a seL4_FailedLookup error.
+            </description>
+            <param dir="in" name="vspace" type="seL4_RISCV_RangeTable">
+                <description>VSpace to map the range / cell into.</description>
+            </param>
+            <param dir="in" name="vaddr" type="seL4_Word">
+                <description>Virtual address at which to map the range.</description>
+            </param>
+            <!-- <param dir="in" name="size" type="seL4_Word">
+                <description>Size of the range to map.</description>
+            </param>
+            <param dir="in" name="secdiv_id" type="seL4_Word">
+                <description>ID of the SecDiv to map the range into.</description>
+            </param> -->
+            <param dir="in" name="rights" type="seL4_CapRights_t">
+                <description>
+                    Rights for the mapping. <docref>Possible values for this type are given in <autoref label="sec:cap_rights"/>.</docref>
+                </description>
+            </param>
+            <param dir="in" name="attr" type="seL4_RISCV_VMAttributes">
+                <description>
+                    VM Attributes for the mapping. <docref>Possible values for this type are given
+                    in <autoref label="ch:vspace"/>.</docref>
+                </description>
+            </param>
+        </method>
+        <method id="RISCVRangeUnmap" name="Unmap">
+            <brief>
+                Unmap a range.
+            </brief>
+            <description>
+                Removes an existing mapping.
+            </description>
+        </method>
+        <method id="RISCVRangeGetAddress" name="GetAddress">
+            <brief>
+                Get the physical address of a range.
+            </brief>
+            <description>
+                <docref>See <autoref label="ch:vspace"/>.</docref>
+            </description>
+            <param dir="in" name="vspace" type="seL4_RISCV_RangeTable">
+                <description>VSpace to search in.</description>
+            </param>
+            <param dir="in" name="vaddr" type="seL4_Word">
+                <description>Virtual (base) address of the desired range.</description>
+            </param>
+            <return>
+                The physical base address of the desired range.
+                <docref>See <autoref label='sec:errors'/> for a description
+                of the message register and tag contents upon error.</docref>
+            </return>
+            <param dir="out" name="paddr" type="seL4_Word"/>
+        </method>
+    </interface>
     <interface name="seL4_RISCV_ASIDControl" manual_name="ASID Control"
         cap_description="The master ASIDControl capability to invoke.">
         <method id="RISCVASIDControlMakePool" name="MakePool">

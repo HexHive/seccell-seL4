@@ -50,7 +50,11 @@
 
 /* Untyped size limits */
 #define seL4_MinUntypedBits     4
+#ifdef CONFIG_RISCV_SECCELL
+#define seL4_MaxUntypedBits     seL4_MaxRangeBits
+#else
 #define seL4_MaxUntypedBits     38
+#endif /* CONFIG_RISCV_SECCELL */
 #ifndef __ASSEMBLER__
 
 typedef enum {

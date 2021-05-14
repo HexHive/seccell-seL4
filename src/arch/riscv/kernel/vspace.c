@@ -107,6 +107,24 @@ static rtcell_t rtcell_new_helper(uint64_t vpn_start, uint64_t vpn_end, uint64_t
     return rtcell_new(ppn, vpn_end >> split, vpn_end & ((1ull << split) - 1), vpn_start);
 }
 
+static word_t rtcell_get_vpn_end_helper(rtcell_t cell)
+{
+    word_t vpn_end;
+    /*
+     * Calculate position after which vpn_end is split in the bitfield block,
+     * c.f. include/arch/riscv/arch/64/mode/object/structures.bf
+     * TODO: Improve calculation => currently based on inherent knowledge of
+     * block size (blocks built of uint64_t words)
+     */
+    size_t split = (sizeof(uint64_t) * 8) - RT_VPN_BITS;
+
+    vpn_end = rtcell_get_vpn_end_top(cell);
+    vpn_end <<= split;
+    vpn_end |= rtcell_get_vpn_end(cell);
+
+    return vpn_end;
+}
+
 static rt_parameters_t get_rt_parameters(unsigned cell_count)
 {
     size_t S = 1;
@@ -155,7 +173,37 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, unsigned int n_
         memset(((uint8_t *)rt) + (64 * old_params.S), 0, 64 * (new_params.S - old_params.S));
     }
 }
-#endif
+
+static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, asid_t asid)
+{
+    /* TODO: seems a little bit too hacky for now... */
+    unsigned int cell_count = rt_cell_count(range_table);
+    rt_parameters_t params = get_rt_parameters(cell_count);
+
+    /* Bring vaddr into correct format for comparisons */
+    vaddr = (vaddr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+
+    for (unsigned int i = 0; i < cell_count; i++) {
+        /* Check if vaddr is already in the currently observed range */
+        if (vaddr >= rtcell_get_vpn_start(range_table[i]) &&
+            vaddr <= rtcell_get_vpn_end_helper(range_table[i])) {
+
+            /* Get the permissions for the currently checked cell */
+            uint8_t *perms_ptr = (uint8_t *)(range_table) + 64 * params.S + asid * params.T + i;
+            rtperm_t perms = { .words = {(word_t)*perms_ptr} };
+
+            /* Check if the currently checked cell is actually mapped into the current address space */
+            if (rtperm_get_valid(perms)) {
+                /* It is! */
+                return true;
+            }
+        }
+    }
+    /* The vaddr was either not mapped into any cell so far or if it was, */
+    /* such a cell isn't valid in the address space under consideration   */
+    return false;
+}
+#endif /* CONFIG_RISCV_SECCELL */
 
 /* ==================== BOOT CODE STARTS HERE ==================== */
 
@@ -1184,6 +1232,158 @@ static exception_t decodeRISCVFrameInvocation(word_t label, word_t length,
 
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
+                                              cte_t *cte, cap_t cap, word_t *buffer)
+{
+    switch (label) {
+        case RISCVRangeMap: {
+            if (unlikely(length < 3 || current_extra_caps.excaprefs[0] == NULL)) {
+                userError("RISCVRangeMap: Truncated message.");
+                current_syscall_error.type = seL4_TruncatedMessage;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            word_t vaddr = getSyscallArg(0, buffer);
+            word_t w_rightsMask = getSyscallArg(1, buffer);
+            vm_attributes_t attr = vmAttributesFromWord(getSyscallArg(2, buffer));
+            cap_t rtCap = current_extra_caps.excaprefs[0]->cap;
+            word_t size = cap_range_cap_get_capRSize(cap);
+            vm_rights_t capVMRights = cap_range_cap_get_capRVMRights(cap);
+
+            if (unlikely(cap_get_capType(rtCap) != cap_range_table_cap ||
+                         !cap_range_table_cap_get_capRTIsMapped(rtCap))) {
+                userError("RISCVRangeMap: Bad RangeTable cap.");
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 1;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(rtCap));
+            asid_t asid = read_urid();
+
+            findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+            if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+                userError("RISCVRangeMap: No RangeTable for ASID");
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (unlikely(find_ret.vspace_root != rt)) {
+                userError("RISCVRangeMap: ASID lookup failed");
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 1;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            word_t vtop = vaddr + size - 1;
+            if (unlikely(vtop >= USER_TOP)) {
+                userError("RISCVRangeMap: Range address too high");
+                current_syscall_error.type = seL4_InvalidArgument;
+                current_syscall_error.invalidArgumentNumber = 0;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            asid_t range_asid = cap_range_cap_get_capRMappedASID(cap);
+            if (unlikely(range_asid != asidInvalid)) {
+                /* Range is already mapped */
+                /* TODO: want to be able to map ranges into several threads with different permissions */
+                /* => look into whether this part of the code has to be modified */
+                if (range_asid != asid) {
+                    userError("RISCVRangeMap: Attempting to remap a range that does not belong to the passed address space");
+                    current_syscall_error.type = seL4_InvalidCapability;
+                    current_syscall_error.invalidCapNumber = 1;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+
+                word_t mapped_vaddr = cap_range_cap_get_capRMappedAddress(cap);
+                if (unlikely(mapped_vaddr != vaddr >> seL4_PageBits)) {
+                    userError("RISCVRangeMap: Attempt to map range at multiple addresses");
+                    current_syscall_error.type = seL4_InvalidCapability;
+                    current_syscall_error.invalidArgumentNumber = 0;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+            } else {
+                /* Make sure that this vaddr isn't already mapped */
+                if (unlikely(rtcell_is_mapped(rt, vaddr, asid))) {
+                    userError("RISCVRangeMap: Virtual address already mapped");
+                    /* TODO: change to seL4_DeleteFirst when unmapping is also supported */
+                    current_syscall_error.type = seL4_InvalidArgument;
+                    current_syscall_error.invalidArgumentNumber = 0;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+            }
+
+            vm_rights_t vm_rights = maskVMRights(capVMRights, rightsFromWord(w_rightsMask));
+            /* TODO: Atri's prototype increments the addr by 4kiB - why? */
+            paddr_t range_paddr = addrFromPPtr((void*) cap_range_cap_get_capRBasePtr(cap));
+
+            unsigned int cell_count = rt_cell_count(rt);
+            /* TODO: Why n_secdiv_ids == 1 ? Should get the correct number somehow */
+            rt_resize_inc(rt, cell_count, 1);
+
+            cell_count++;
+            rt_parameters_t params = get_rt_parameters(cell_count);
+            /* Add new cell */
+            rt[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
+                                                   (vaddr + size - 1) >> seL4_PageBits,
+                                                   range_paddr >> seL4_PageBits);
+            /* Add invalid cell to mark end */
+            rt[cell_count].words[0] = -1ull;
+            rt[cell_count].words[1] = -1ull;
+
+            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64) + (cell_count - 1);
+            uint8_t *perms_asid = perms_sup + (params.T * asid);
+            word_t read = RISCVGetReadFromVMRights(vm_rights);
+            word_t write = RISCVGetWriteFromVMRights(vm_rights);
+            bool_t exec = !vm_attributes_get_riscvExecuteNever(attr);
+            /* Set permissions */
+            *perms_sup = *perms_asid = (uint8_t)rtperm_new(1, 1, 0, exec, write, read, 1).words[0];
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return EXCEPTION_NONE;
+        }
+
+        case RISCVRangeUnmap: {
+            userError("RISCVRangeUnmap: Operation currently not implemented.");
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        case RISCVRangeGetAddress: {
+            word_t vaddr = getSyscallArg(0, buffer);
+            cap_t rtCap = current_extra_caps.excaprefs[0]->cap;
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(rtCap));
+            unsigned int cell_count = rt_cell_count(rt);
+
+            for (unsigned int i = 0; i < cell_count; i++) {
+                rtcell_t cell = rt[i];
+                word_t vpn_start = rtcell_get_vpn_start(cell);
+                if(vaddr == (vpn_start << seL4_PageBits)) {
+                    /* Found cell with given virtual address */
+                    word_t ppn = rtcell_get_ppn(cell);
+
+                    /* Return physical address in first message register */
+                    setRegister(NODE_STATE(ksCurThread), msgRegisters[0], ppn);
+                    setRegister(NODE_STATE(ksCurThread), msgInfoRegister,
+                                wordFromMessageInfo(seL4_MessageInfo_new(0, 0, 0, 1)));
+
+                    return EXCEPTION_NONE;
+                }
+            }
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        default: {
+            userError("RISCVRange: Illegal operation.");
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+    }
+}
+#endif /* CONFIG_RISCV_SECCELL */
+
 exception_t decodeRISCVMMUInvocation(word_t label, word_t length, cptr_t cptr,
                                      cte_t *cte, cap_t cap, word_t *buffer)
 {
@@ -1194,6 +1394,11 @@ exception_t decodeRISCVMMUInvocation(word_t label, word_t length, cptr_t cptr,
 
     case cap_frame_cap:
         return decodeRISCVFrameInvocation(label, length, cte, cap, buffer);
+
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_cap:
+        return decodeRISCVRangeInvocation(label, length, cte, cap, buffer);
+#endif /* CONFIG_RISCV_SECCELL */
 
     case cap_asid_control_cap: {
         word_t     i;
@@ -1291,8 +1496,14 @@ exception_t decodeRISCVMMUInvocation(word_t label, word_t length, cptr_t cptr,
         vspaceCap = vspaceCapSlot->cap;
 
         if (unlikely(
-                cap_get_capType(vspaceCap) != cap_page_table_cap ||
-                cap_page_table_cap_get_capPTIsMapped(vspaceCap))) {
+                (cap_get_capType(vspaceCap) != cap_page_table_cap ||
+                 cap_page_table_cap_get_capPTIsMapped(vspaceCap))
+#ifdef CONFIG_RISCV_SECCELL
+                &&
+                (cap_get_capType(vspaceCap) != cap_range_table_cap ||
+                 cap_range_table_cap_get_capRTIsMapped(vspaceCap)))
+#endif /* CONFIG_RISCV_SECCELL */
+            ) {
             userError("RISCVASIDPool: Invalid vspace root.");
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 1;
