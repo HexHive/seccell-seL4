@@ -133,12 +133,11 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
     case cap_range_cap:
         /* TODO: Currently no support for unmapping => want to find the permissions */
         /* in the range table and set it to invalid */
-        /* if (cap_range_cap_get_capRMappedASID(cap)) {
-            unmapRange(cap_range_cap_get_capRSize(cap),
-                       cap_range_cap_get_capRMappedASID(cap),
+        if (cap_range_cap_get_capRMappedASID(cap)) {
+            unmapRange(cap_range_cap_get_capRMappedASID(cap),
                        cap_range_cap_get_capRMappedAddress(cap),
                        cap_range_cap_get_capRBasePtr(cap));
-        } */
+        }
         break;
     case cap_range_table_cap:
         if (final && cap_range_table_cap_get_capRTIsMapped(cap)) {

@@ -870,6 +870,46 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
     sfence();
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+void unmapRange(asid_t asid, vptr_t vptr, pptr_t pptr)
+{
+    /* For now, unmapping a range means invalidating it for the specific process
+       Removing ranges completely is more difficult because we'd have to check
+       whether some (other) process still tries to access it */
+    findVSpaceForASID_ret_t find_ret;
+    rtcell_t *rt;
+    unsigned int cell_count;
+
+    find_ret = findVSpaceForASID(asid);
+    if (find_ret.status != EXCEPTION_NONE) {
+        return;
+    }
+
+    rt = RT_PTR(find_ret.vspace_root);
+    cell_count = rt_cell_count(rt);
+    rt_parameters_t params = get_rt_parameters(cell_count);
+
+    for (unsigned int i = 0; i < cell_count; i++) {
+        rtcell_t cell = rt[i];
+
+        word_t vpn_start = rtcell_get_vpn_start(cell);
+        if (vptr == (vpn_start << seL4_PageBits) &&
+            pptr == rtcell_get_ppn(cell)) {
+            uint8_t *perms_ptr = (uint8_t *)(rt) + 64 * params.S + asid * params.T + i;
+            rtperm_t perms = rtperm_from_uint8(perms_ptr);
+            perms = rtperm_set_valid(perms, 0);
+            *perms_ptr = rtperm_to_uint8(perms);
+            /* There can be multiple cells created by different processes with the
+               same dimensions and addresses and we don't inherently know which one
+               is the one to unmap for the current process => continue iterating
+               over all cells and don't return yet */
+        }
+    }
+    /* Make sure all the invalidations are propagated to memory before continuing */
+    sfence();
+}
+#endif /* CONFIG_RISCV_SECCELL */
+
 void setVMRoot(tcb_t *tcb)
 {
     cap_t threadRoot;
@@ -1346,9 +1386,22 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
         }
 
         case RISCVRangeUnmap: {
-            userError("RISCVRangeUnmap: Operation currently not implemented.");
-            current_syscall_error.type = seL4_IllegalOperation;
-            return EXCEPTION_SYSCALL_ERROR;
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+
+            /* Unmap memory */
+            if (cap_range_cap_get_capRMappedASID(cap) != asidInvalid) {
+                unmapRange(cap_range_cap_get_capRMappedASID(cap),
+                           cap_range_cap_get_capRMappedAddress(cap),
+                           cap_range_cap_get_capRBasePtr(cap)
+                          );
+            }
+            /* Invalidate capability */
+            cap_t slot_cap = cte->cap;
+            slot_cap = cap_range_cap_set_capRMappedAddress(slot_cap, 0);
+            slot_cap = cap_range_cap_set_capRMappedASID(slot_cap, asidInvalid);
+            cte->cap = slot_cap;
+
+            return EXCEPTION_NONE;
         }
 
         case RISCVRangeGetAddress: {
