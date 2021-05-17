@@ -74,6 +74,24 @@ typedef pte_t pde_t;
 #define WORD_BITS   (8 * sizeof(word_t))
 #define WORD_PTR(r) ((word_t *)(r))
 
+#ifdef CONFIG_RISCV_SECCELL
+/* Helper functions to handle permissions in memory in accordance with
+   the defined structure (see structures.bf) */
+
+/* Create a permission structure from a byte-sized permission table entry */
+static inline rtperm_t rtperm_from_uint8(uint8_t *encoded_perms) {
+    rtperm_t perms = { .words = {(word_t)*encoded_perms} };
+    return perms;
+}
+
+/* Create a byte-sized permission bitstring from a permission structure
+   The main objective here is to hide the underlying structure, i.e., the
+   words array access from more high-level code */
+static inline uint8_t rtperm_to_uint8(rtperm_t perms) {
+    return (uint8_t)perms.words[0];
+}
+#endif /* CONFIG_RISCV_SECCELL */
+
 static inline bool_t CONST cap_get_archCapIsPhysical(cap_t cap)
 {
     cap_tag_t ctag;

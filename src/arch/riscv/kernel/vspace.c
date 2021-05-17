@@ -190,7 +190,7 @@ static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, asid_t asid)
 
             /* Get the permissions for the currently checked cell */
             uint8_t *perms_ptr = (uint8_t *)(range_table) + 64 * params.S + asid * params.T + i;
-            rtperm_t perms = { .words = {(word_t)*perms_ptr} };
+            rtperm_t perms = rtperm_from_uint8(perms_ptr);
 
             /* Check if the currently checked cell is actually mapped into the current address space */
             if (rtperm_get_valid(perms)) {
@@ -247,7 +247,7 @@ BOOT_CODE void map_kernel_range(paddr_t paddr, pptr_t vaddr, size_t size)
     kernel_root_rangeTable[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
                                                                (vaddr + size - 1) >> seL4_PageBits,
                                                                paddr >> seL4_PageBits);
-    perms[cell_count - 1] = (uint8_t)rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0];
+    perms[cell_count - 1] = rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
     /* Mark end of cell list in the permission table */
     kernel_root_rangeTable[cell_count].words[0] = -1ull;
@@ -270,13 +270,13 @@ BOOT_CODE VISIBLE void map_kernel_window(void)
     kernel_root_rangeTable[0] = rtcell_new_helper(KERNEL_ELF_BASE >> seL4_PageBits,
                                                   (KDEV_BASE - 1) >> seL4_PageBits,
                                                   KERNEL_ELF_PADDR_BASE >> seL4_PageBits);
-    perms[0] = (uint8_t)rtperm_new(1, /* dirty    */
-                                   1, /* accessed */
-                                   0, /* global   */
-                                   1, /* exec     */
-                                   1, /* write    */
-                                   1, /* read     */
-                                   1  /* valid    */).words[0];
+    perms[0] = rtperm_to_uint8(rtperm_new(1, /* dirty    */
+                                          1, /* accessed */
+                                          0, /* global   */
+                                          1, /* exec     */
+                                          1, /* write    */
+                                          1, /* read     */
+                                          1  /* valid    */));
 
     /* Recall:                                                               */
     /* PPTR_BASE = first virtual address of kernels physical memory window   */
@@ -285,7 +285,7 @@ BOOT_CODE VISIBLE void map_kernel_window(void)
     kernel_root_rangeTable[1] = rtcell_new_helper(PPTR_BASE >> seL4_PageBits,
                                                   (PPTR_TOP - 1) >> seL4_PageBits,
                                                   PADDR_BASE >> seL4_PageBits);
-    perms[1] = (uint8_t)rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0];
+    perms[1] = rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
     /* Mark end of cell list in the permission table */
     kernel_root_rangeTable[2].words[0] = -1ull;
@@ -408,7 +408,7 @@ BOOT_CODE void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap)
     /* Both kernel(supervisor) and user asid get same permissions since
      * mstatus.SUM = 0 in the standard port */
     kern_perms[cell_count - 1] = asid_perms[cell_count - 1] =
-        (uint8_t)(rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0]);
+        rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 #else
     pte_t *lvl1pt   = PTE_PTR(pptr_of_cap(vspace_cap));
     pte_t *frame_pptr   = PTE_PTR(pptr_of_cap(frame_cap));
@@ -458,7 +458,7 @@ void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
     uint8_t *asid_perms = kern_perms + (params.T * IT_ASID);
     /* Both kernel (supervisor) and user asid get same permissions */
     kern_perms[cell_count - 1] = asid_perms[cell_count - 1] =
-        (uint8_t)(rtperm_new(1, 1, 0, 1, 1, 1, 1).words[0]);
+        rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
     /* Add invalid cell to mark the end of the cell list in the range table */
     rt[cell_count].words[0] = -1ull;
@@ -1339,7 +1339,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             word_t write = RISCVGetWriteFromVMRights(vm_rights);
             bool_t exec = !vm_attributes_get_riscvExecuteNever(attr);
             /* Set permissions */
-            *perms_sup = *perms_asid = (uint8_t)rtperm_new(1, 1, 0, exec, write, read, 1).words[0];
+            *perms_sup = *perms_asid = rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
 
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;
