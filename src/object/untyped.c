@@ -74,10 +74,17 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     objectSize = getObjectSize(newType, userObjSize);
 
+#ifdef CONFIG_RISCV_SECCELL
+    /* Exclude impossibly large object sizes. getObjectSize can overflow which is
+       totally fine as long as the resulting size doesn't exceed the maximum size
+       for a range */
+    if (objectSize > seL4_MaxUntypedBits) {
+#else
     /* Exclude impossibly large object sizes. getObjectSize can overflow if userObjSize
        is close to 2^wordBits, which is nonsensical in any case, so we check that this
        did not happen. userObjSize will always need to be less than wordBits. */
     if (userObjSize >= wordBits || objectSize > seL4_MaxUntypedBits) {
+#endif /* CONFIG_RISCV_SECCELL */
         userError("Untyped Retype: Invalid object size.");
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
@@ -100,6 +107,18 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
         current_syscall_error.invalidArgumentNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
     }
+
+#ifdef CONFIG_RISCV_SECCELL
+    /* If the target object is a SecCell range, is it at least size 12?
+       Range size is given as actual size, not as number of bits => compare to
+       shifted range size */
+    if (newType == seL4_RISCV_RangeObject && userObjSize < (1ull << seL4_MinRangeBits)) {
+        userError("Untyped Retype: Requested range size too small.");
+        current_syscall_error.type = seL4_InvalidArgument;
+        current_syscall_error.invalidArgumentNumber = 1;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+#endif /* CONFIG_RISCV_SECCELL */
 
 #ifdef CONFIG_KERNEL_MCS
     if (newType == seL4_SchedContextObject && userObjSize < seL4_MinSchedContextBits) {
