@@ -1273,6 +1273,140 @@ static exception_t decodeRISCVFrameInvocation(word_t label, word_t length,
 }
 
 #ifdef CONFIG_RISCV_SECCELL
+static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, cte_t *cte,
+                                                   cap_t cap, word_t *buffer)
+{
+    switch (label) {
+        case RISCVRangeTableMap: {
+            if (unlikely(length < 1 || current_extra_caps.excaprefs[0] == NULL)) {
+                userError("RISCVRangeTableMap: Truncated message.");
+                current_syscall_error.type = seL4_TruncatedMessage;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (unlikely(cap_range_table_cap_get_capRTIsMapped(cap))) {
+                userError("RISCVRangeTableMap: RangeTable is already mapped.");
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 0;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            cap_t rtCap = current_extra_caps.excaprefs[0]->cap;
+            if (unlikely(cap_get_capType(rtCap) != cap_range_table_cap ||
+                         !cap_range_table_cap_get_capRTIsMapped(rtCap))) {
+                userError("RISCVRangeTableMap: Invalid upper-level range table.");
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 1;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+
+            word_t vaddr = getSyscallArg(0, buffer);
+            asid_t asid = read_urid();
+
+            if (unlikely(vaddr >= USER_TOP)) {
+                userError("RISCVRangeTableMap: Virtual address too high.");
+                current_syscall_error.type = seL4_InvalidArgument;
+                current_syscall_error.invalidArgumentNumber = 0;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+            if (unlikely(find_ret.status != EXCEPTION_NONE)) {
+                userError("RISCVRangeTableMap: ASID lookup failed.");
+                current_syscall_error.type = seL4_FailedLookup;
+                current_syscall_error.failedLookupWasSource = false;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            if (unlikely(RT_PTR(find_ret.vspace_root) != rt)) {
+                userError("RISCVRangeTableMap: ASID lookup failed.");
+                current_syscall_error.type = seL4_InvalidCapability;
+                current_syscall_error.invalidCapNumber = 1;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            /* Currently assume a range table is the size of a page, i.e., 4096 bytes */
+            /* TODO: maybe merge this address check with the above address check */
+            word_t vaddr_top = vaddr + BIT(seL4_PageBits) - 1;
+            if (unlikely(vaddr_top >= USER_TOP)) {
+                userError("RISCVRangeTableMap: Range table extends into kernel space");
+                current_syscall_error.type = seL4_InvalidArgument;
+                current_syscall_error.invalidArgumentNumber = 0;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            paddr_t paddr = addrFromPPtr((void *) cap_range_table_cap_get_capRTBasePtr(cap));
+
+            unsigned int cell_count = rt_cell_count(rt);
+            /* Resize range table if required */
+            /* TODO: Why n_secdiv_ids == 1 ? Should get the correct number somehow */
+            rt_resize_inc(rt, cell_count, 1);
+
+            cell_count++;
+            rt_parameters_t params = get_rt_parameters(cell_count);
+
+            /* Add new cell */
+            rt[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
+                                                   (vaddr_top - 1) >> seL4_PageBits,
+                                                   paddr >> seL4_PageBits);
+
+            /* Add invalid cell to mark end */
+            rt[cell_count].words[0] = -1ull;
+            rt[cell_count].words[1] = -1ull;
+
+            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64) + (cell_count - 1);
+            uint8_t *perms_asid = perms_sup + (params.T * asid);
+            /* Set permissions: non-executable, readable, writable */
+            *perms_sup = *perms_asid = rtperm_to_uint8(rtperm_new(1, 1, 0, 0, 1, 1, 1));
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return EXCEPTION_NONE;
+        }
+
+        case RISCVRangeTableUnmap: {
+            if (unlikely(!isFinalCapability(cte))) {
+                userError("RISCVRangeTableUnmap: Cannot unmap if more than one capability exists.");
+                current_syscall_error.type = seL4_RevokeFirst;
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+            asid_t asid = read_urid();
+            /* Make sure that we do not unmap the top-level range table */
+            if (likely(cap_range_table_cap_get_capRTIsMapped(cap))) {
+                findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+                rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+                if (unlikely(find_ret.status == EXCEPTION_NONE &&
+                             RT_PTR(find_ret.vspace_root) == rt)) {
+                    userError("RISCVRangeTableUnmap: Cannot unmap top-level range table.");
+                    current_syscall_error.type = seL4_RevokeFirst;
+                    return EXCEPTION_SYSCALL_ERROR;
+                }
+            }
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+
+            /* Unmap memory (just like a normal range) */
+            unmapRange(asid,
+                       cap_range_table_cap_get_capRTMappedAddress(cap),
+                       cap_range_table_cap_get_capRTBasePtr(cap));
+            /* Invalidate capability */
+            cap_t slot_cap = cte->cap;
+            slot_cap = cap_range_table_cap_set_capRTMappedAddress(slot_cap, 0);
+            slot_cap = cap_range_table_cap_set_capRTIsMapped(slot_cap, false);
+            cte->cap = slot_cap;
+
+            return EXCEPTION_NONE;
+        }
+
+        default: {
+            userError("RISCVRangeTable: Illegal operation.");
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+    }
+}
+
 static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                                               cte_t *cte, cap_t cap, word_t *buffer)
 {
@@ -1449,6 +1583,9 @@ exception_t decodeRISCVMMUInvocation(word_t label, word_t length, cptr_t cptr,
         return decodeRISCVFrameInvocation(label, length, cte, cap, buffer);
 
 #ifdef CONFIG_RISCV_SECCELL
+    case cap_range_table_cap:
+        return decodeRISCVRangeTableInvocation(label, length, cte, cap, buffer);
+
     case cap_range_cap:
         return decodeRISCVRangeInvocation(label, length, cte, cap, buffer);
 #endif /* CONFIG_RISCV_SECCELL */
