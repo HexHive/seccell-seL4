@@ -23,7 +23,11 @@ exception_t Arch_decodeInvocation(word_t label, word_t length,
                                   cptr_t cptr, cte_t *slot, cap_t cap,
                                   bool_t call, word_t *buffer);
 void Arch_prepareThreadDelete(tcb_t *thread);
+#ifdef CONFIG_RISCV_SECCELL
+word_t Arch_getObjectSize(word_t t, word_t userObjSize);
+#else
 word_t Arch_getObjectSize(word_t t);
+#endif /* CONFIG_RISCV_SECCELL */
 bool_t Arch_isFrameType(word_t type);
 
 static inline void Arch_postCapDeletion(cap_t cap)

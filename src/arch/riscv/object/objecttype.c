@@ -244,7 +244,11 @@ bool_t CONST Arch_sameObjectAs(cap_t cap_a, cap_t cap_b)
     return Arch_sameRegionAs(cap_a, cap_b);
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+word_t Arch_getObjectSize(word_t t, word_t userObjSize)
+#else
 word_t Arch_getObjectSize(word_t t)
+#endif /* CONFIG_RISCV_SECCELL */
 {
     switch (t) {
     case seL4_RISCV_4K_Page:
@@ -266,9 +270,23 @@ word_t Arch_getObjectSize(word_t t)
         return seL4_TeraPageBits;
 #endif
 #ifdef CONFIG_RISCV_SECCELL
-    case seL4_RISCV_RangeObject:
-        return seL4_MaxRangeBits;
-#endif
+    case seL4_RISCV_RangeObject: {
+        /* Range objects don't have size set to a number of bits but to the actual
+           size => compare to shifted value instead of the number of bits itself, but
+           return the number of necessary bits for further processing */
+        if (likely(userObjSize <= (1ull << seL4_MaxRangeBits))) {
+            /* TODO: should we initialize bits with 12 to have a minimum of a page? */
+            word_t bits = 0;
+            while ((1ull << bits) < userObjSize) {
+                bits++;
+            }
+            return bits;
+        } else {
+            fail("Invalid range object size: range too big");
+            return 0;
+        }
+    }
+#endif /* CONFIG_RISCV_SECCELL */
     default:
         fail("Invalid object type");
         return 0;

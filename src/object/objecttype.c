@@ -33,7 +33,11 @@
 word_t getObjectSize(word_t t, word_t userObjSize)
 {
     if (t >= seL4_NonArchObjectTypeCount) {
+#ifdef CONFIG_RISCV_SECCELL
+        return Arch_getObjectSize(t, userObjSize);
+#else
         return Arch_getObjectSize(t);
+#endif /* CONFIG_RISCV_SECCELL */
     } else {
         switch (t) {
         case seL4_TCBObject:
