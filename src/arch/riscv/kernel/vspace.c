@@ -702,6 +702,48 @@ lookupPTSlot_ret_t lookupPTSlot(pte_t *lvl1pt, vptr_t vptr)
     return ret;
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+static inline rtcell_t *getPPtrFromHWRTCell(rtcell_t *cell)
+{
+    /* TODO: shift by PageTableBits here because we have the same offset in both cases - maybe define own constant? */
+    return RT_PTR(ptrFromPAddr(rtcell_ptr_get_ppn(cell) << seL4_PageTableBits));
+}
+
+lookupRTCell_ret_t lookupRTCell(rtcell_t *rt, vptr_t vptr)
+{
+    /* Initialize return value to prevent compiler errors because of uninitialized values
+       => should never actually be returned, we should always find a valid slot! */
+    lookupRTCell_ret_t ret = {0, 0};
+
+    /* Bring vptr into correct format for comparisons */
+    vptr = (vptr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+
+    /* Iterate over all the ranges */
+    for (unsigned int i = 0;
+         rt[i].words[0] != -1ull || rt[i].words[1] != -1ull;
+         i++) {
+        if (vptr >= rtcell_get_vpn_start(rt[i]) &&
+            vptr <= rtcell_get_vpn_end_helper(rt[i])) {
+            /* Found a range that contains the virtual address */
+            /* TODO: ranges can overlap - how to handle that case? */
+            ret.rtSlotIndex = i;
+
+            word_t bits = 0;
+            word_t size = rtcell_get_vpn_end_helper(rt[i]) - rtcell_get_vpn_start(rt[i]);
+            while (size > 1ull << bits) {
+                bits++;
+            }
+            /* Increase bit number by seL4_PageBits because of shifted adresses being used for the calculations above */
+            ret.rSizeBits = bits + seL4_PageBits;
+
+            /* Found range, set the return values => end iterating over cells */
+            break;
+        }
+    }
+    return ret;
+}
+#endif /* CONFIG_RISCV_SECCELL */
+
 exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
 {
     uint64_t addr;
@@ -950,8 +992,14 @@ void setVMRoot(tcb_t *tcb)
 
 bool_t CONST isValidVTableRoot(cap_t cap)
 {
-    return (cap_get_capType(cap) == cap_page_table_cap &&
-            cap_page_table_cap_get_capPTIsMapped(cap));
+    /* TODO: Only check for captype based on ifdef..else instead of checking both? */
+    return ((cap_get_capType(cap) == cap_page_table_cap &&
+             cap_page_table_cap_get_capPTIsMapped(cap))
+#ifdef CONFIG_RISCV_SECCELL
+            || (cap_get_capType(cap) == cap_range_table_cap &&
+                cap_range_table_cap_get_capRTIsMapped(cap))
+#endif /* CONFIG_RISCV_SECCELL */
+           );
 }
 
 exception_t checkValidIPCBuffer(vptr_t vptr, cap_t cap)
@@ -1823,6 +1871,27 @@ void Arch_userStackTrace(tcb_t *tptr)
         return;
     }
 
+#ifdef CONFIG_RISCV_SECCELL
+    /* TODO: ASID-based access-control even necessary? I mean, we're in kernel space here... */
+    asid_t asid = getRegister(tptr, ReturnUID);
+    rtcell_t *vspace_root = RT_PTR(pptr_of_cap(threadRoot));
+
+    unsigned int cell_count = rt_cell_count(vspace_root);
+    rt_parameters_t params = get_rt_parameters(cell_count);
+    uint8_t *asid_perms = (uint8_t *)(vspace_root) + (params.S * 64) + (params.T * asid);
+
+    for (int i = 0; i < CONFIG_USER_STACK_TRACE_LENGTH; i++) {
+        word_t address = sp + (i * sizeof(word_t));
+        lookupRTCell_ret_t ret = lookupRTCell(vspace_root, address);
+        if (rtperm_get_valid(rtperm_from_uint8(asid_perms + ret.rtSlotIndex))) {
+            pptr_t pptr = (pptr_t)(getPPtrFromHWRTCell(vspace_root + ret.rtSlotIndex));
+            word_t *value = (word_t *)((word_t)pptr + (address & MASK(ret.rSizeBits)));
+            printf("0x%lx: 0x%lx\n", (long) address, (long) *value);
+        } else {
+            printf("0x%lx: INVALID\n", (long) address);
+        }
+    }
+#else
     pte_t *vspace_root = PTE_PTR(pptr_of_cap(threadRoot));
     for (int i = 0; i < CONFIG_USER_STACK_TRACE_LENGTH; i++) {
         word_t address = sp + (i * sizeof(word_t));
@@ -1835,8 +1904,9 @@ void Arch_userStackTrace(tcb_t *tptr)
             printf("0x%lx: INVALID\n", (long) address);
         }
     }
+#endif /* CONFIG_RISCV_SECCELL */
 }
-#endif
+#endif /* CONFIG_PRINTING */
 
 #ifdef CONFIG_KERNEL_LOG_BUFFER
 exception_t benchmark_arch_map_logBuffer(word_t frame_cptr)
