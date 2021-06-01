@@ -26,4 +26,4 @@ enum asidConstants {
 
 typedef word_t asid_t;
 
-
+typedef word_t secdivid_t;

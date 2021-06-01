@@ -145,7 +145,7 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
              * RangeTables are always mapped as vspace_root => delete it from
              * the ASID pool
              */
-            asid_t asid = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+            asid_t asid = cap_range_table_cap_get_capRTMappedASID(cap);
             findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
             /* TODO: Remove PTE_PTR casts when rtcell_t pointers can also be passed */
@@ -392,6 +392,7 @@ cap_t Arch_createObject(object_t t, void *regionBase, word_t userSize, bool_t
                );
     case seL4_RISCV_RangeTableObject:
         return cap_range_table_cap_new(
+                   asidInvalid,            /* capRTMappedASID    */
                    (word_t)regionBase,     /* capRTBasePtr       */
                    0,                      /* capRTIsMapped      */
                    0                       /* capRTMappedAddress */

@@ -143,7 +143,7 @@ static unsigned int rt_cell_count(rtcell_t *rt)
     unsigned int count = 0;
 
     /* End is marked with a cell structure that has all bits set to 1 */
-    while ((rt + count)->words[0] != -1ull || (rt + count)->words[1] != -1ull) {
+    while (rt[count].words[0] != -1ull || rt[count].words[1] != -1ull) {
         /* Increment counter as long as we haven't reached the end */
         count++;
     }
@@ -174,7 +174,7 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, unsigned int n_
     }
 }
 
-static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, asid_t asid)
+static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, secdivid_t secdiv_id)
 {
     /* TODO: seems a little bit too hacky for now... */
     unsigned int cell_count = rt_cell_count(range_table);
@@ -183,14 +183,16 @@ static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, asid_t asid)
     /* Bring vaddr into correct format for comparisons */
     vaddr = (vaddr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
 
+    /* Get permissions for the requested SecDiv */
+    uint8_t *perms_ptr = (uint8_t *)(range_table) + (params.S * 64) + (params.T * secdiv_id);
+
     for (unsigned int i = 0; i < cell_count; i++) {
         /* Check if vaddr is already in the currently observed range */
         if (vaddr >= rtcell_get_vpn_start(range_table[i]) &&
             vaddr <= rtcell_get_vpn_end_helper(range_table[i])) {
 
             /* Get the permissions for the currently checked cell */
-            uint8_t *perms_ptr = (uint8_t *)(range_table) + 64 * params.S + asid * params.T + i;
-            rtperm_t perms = rtperm_from_uint8(perms_ptr);
+            rtperm_t perms = rtperm_from_uint8(perms_ptr[i]);
 
             /* Check if the currently checked cell is actually mapped into the current address space */
             if (rtperm_get_valid(perms)) {
@@ -404,10 +406,11 @@ BOOT_CODE void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap)
     rt_parameters_t params = get_rt_parameters(cell_count);
 
     uint8_t *kern_perms = (uint8_t *)(rt) + (params.S * 64);
-    uint8_t *asid_perms = kern_perms + (params.T * IT_ASID);
-    /* Both kernel(supervisor) and user asid get same permissions since
-     * mstatus.SUM = 0 in the standard port */
-    kern_perms[cell_count - 1] = asid_perms[cell_count - 1] =
+    uint8_t *secdiv_perms = kern_perms + (params.T * IT_ASID);
+    /* Both kernel (supervisor) and user ASID get same permissions since
+       mstatus.SUM = 0 in the standard port
+       User ASID is also SecDiv ID here for the root thread */
+    kern_perms[cell_count - 1] = secdiv_perms[cell_count - 1] =
         rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 #else
     pte_t *lvl1pt   = PTE_PTR(pptr_of_cap(vspace_cap));
@@ -455,9 +458,10 @@ void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
     /* Add permissions for newly created cell */
     rt_parameters_t params = get_rt_parameters(cell_count);
     uint8_t *kern_perms = (uint8_t *)(rt) + (params.S * 64);
-    uint8_t *asid_perms = kern_perms + (params.T * IT_ASID);
-    /* Both kernel (supervisor) and user asid get same permissions */
-    kern_perms[cell_count - 1] = asid_perms[cell_count - 1] =
+    uint8_t *secdiv_perms = kern_perms + (params.T * IT_ASID);
+    /* Both kernel (supervisor) and user ASID get same permissions
+       User ASID is also SecDiv ID here for the root thread */
+    kern_perms[cell_count - 1] = secdiv_perms[cell_count - 1] =
         rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
     /* Add invalid cell to mark the end of the cell list in the range table */
@@ -515,6 +519,7 @@ BOOT_CODE cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_re
      * range table. The rest will be setup when frames are allocated */
     cap_t rt_cap;
     rt_cap = cap_range_table_cap_new(
+            IT_ASID,                    /* capRTMappedASID    */
             (word_t) rootserver.vspace, /* capRTBasePtr       */
             1,                          /* capRTIsMapped      */
             (word_t) rootserver.vspace  /* capRTMappedAddress */
@@ -915,21 +920,21 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
 #ifdef CONFIG_RISCV_SECCELL
 void unmapRange(asid_t asid, vptr_t vptr, pptr_t pptr)
 {
-    /* For now, unmapping a range means invalidating it for the specific process
+    /* For now, unmapping a range means invalidating it for the specific SecDiv.
        Removing ranges completely is more difficult because we'd have to check
-       whether some (other) process still tries to access it */
-    findVSpaceForASID_ret_t find_ret;
-    rtcell_t *rt;
-    unsigned int cell_count;
-
-    find_ret = findVSpaceForASID(asid);
+       whether some (other) SecDiv still tries to access it.
+       On top, we want to prevent permission table fragmentation for now. */
+    findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
     if (find_ret.status != EXCEPTION_NONE) {
         return;
     }
 
-    rt = RT_PTR(find_ret.vspace_root);
-    cell_count = rt_cell_count(rt);
+    secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+
+    rtcell_t *rt = RT_PTR(find_ret.vspace_root);
+    unsigned int cell_count = rt_cell_count(rt);
     rt_parameters_t params = get_rt_parameters(cell_count);
+    uint8_t *perms = (uint8_t *)(rt) + (params.S * 64) + (params.T * secdiv_id);
 
     for (unsigned int i = 0; i < cell_count; i++) {
         rtcell_t cell = rt[i];
@@ -937,14 +942,13 @@ void unmapRange(asid_t asid, vptr_t vptr, pptr_t pptr)
         word_t vpn_start = rtcell_get_vpn_start(cell);
         if (vptr == (vpn_start << seL4_PageBits) &&
             pptr == rtcell_get_ppn(cell)) {
-            uint8_t *perms_ptr = (uint8_t *)(rt) + 64 * params.S + asid * params.T + i;
-            rtperm_t perms = rtperm_from_uint8(perms_ptr);
-            perms = rtperm_set_valid(perms, 0);
-            *perms_ptr = rtperm_to_uint8(perms);
-            /* There can be multiple cells created by different processes with the
-               same dimensions and addresses and we don't inherently know which one
-               is the one to unmap for the current process => continue iterating
-               over all cells and don't return yet */
+            rtperm_t cell_perms = rtperm_from_uint8(perms[i]);
+            cell_perms = rtperm_set_valid(cell_perms, 0);
+            perms[i] = rtperm_to_uint8(cell_perms);
+            /* A single SecDiv can only have a virtual address in its address space
+               once but there may be several overlapping ranges containing the address
+               in the permission table => set all of them to invalid (even though at
+               most one of them should be valid) and thus continue iterating */
         }
     }
     /* Make sure all the invalidations are propagated to memory before continuing */
@@ -960,7 +964,7 @@ void setVMRoot(tcb_t *tcb)
     rtcell_t *rt;
 #endif /* CONFIG_RISCV_SECCELL */
     pte_t *lvl1pt;
-    findVSpaceForASID_ret_t  find_ret;
+    findVSpaceForASID_ret_t find_ret;
 
     threadRoot = TCB_PTR_CTE_PTR(tcb, tcbVTable)->cap;
 
@@ -1326,6 +1330,9 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
 {
     switch (label) {
         case RISCVRangeTableMap: {
+            /* TODO: is this functionality even correct? Range tables mapped as
+               ranges in another range table - shouldn't it just be referenced in
+               the kernel? */
             if (unlikely(length < 1 || current_extra_caps.excaprefs[0] == NULL)) {
                 userError("RISCVRangeTableMap: Truncated message.");
                 current_syscall_error.type = seL4_TruncatedMessage;
@@ -1351,7 +1358,8 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
 
             word_t vaddr = getSyscallArg(0, buffer);
-            asid_t asid = read_urid();
+            asid_t asid = cap_range_table_cap_get_capRTMappedASID(cap);
+            secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
 
             if (unlikely(vaddr >= USER_TOP)) {
                 userError("RISCVRangeTableMap: Virtual address too high.");
@@ -1399,15 +1407,16 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             rt[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
                                                    (vaddr_top - 1) >> seL4_PageBits,
                                                    paddr >> seL4_PageBits);
+            /* Add permissions for new cell */
+            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64);
+            uint8_t *perms_secdiv = perms_sup + (params.T * secdiv_id);
+            /* Set permissions: non-executable, readable, writable */
+            perms_sup[cell_count - 1] = perms_secdiv[cell_count - 1] =
+                rtperm_to_uint8(rtperm_new(1, 1, 0, 0, 1, 1, 1));
 
             /* Add invalid cell to mark end */
             rt[cell_count].words[0] = -1ull;
             rt[cell_count].words[1] = -1ull;
-
-            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64) + (cell_count - 1);
-            uint8_t *perms_asid = perms_sup + (params.T * asid);
-            /* Set permissions: non-executable, readable, writable */
-            *perms_sup = *perms_asid = rtperm_to_uint8(rtperm_new(1, 1, 0, 0, 1, 1, 1));
 
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;
@@ -1482,7 +1491,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             }
 
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(rtCap));
-            asid_t asid = read_urid();
+            asid_t asid = cap_range_table_cap_get_capRTMappedASID(rtCap);
 
             findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
             if (unlikely(find_ret.status != EXCEPTION_NONE)) {
@@ -1508,10 +1517,10 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             }
 
             asid_t range_asid = cap_range_cap_get_capRMappedASID(cap);
+            secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+
             if (unlikely(range_asid != asidInvalid)) {
                 /* Range is already mapped */
-                /* TODO: want to be able to map ranges into several threads with different permissions */
-                /* => look into whether this part of the code has to be modified */
                 if (range_asid != asid) {
                     userError("RISCVRangeMap: Attempting to remap a range that does not belong to the passed address space");
                     current_syscall_error.type = seL4_InvalidCapability;
@@ -1527,12 +1536,10 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                     return EXCEPTION_SYSCALL_ERROR;
                 }
             } else {
-                /* Make sure that this vaddr isn't already mapped */
-                if (unlikely(rtcell_is_mapped(rt, vaddr, asid))) {
+                /* Make sure that this vaddr isn't already mapped for the SecDiv in question */
+                if (unlikely(rtcell_is_mapped(rt, vaddr, secdiv_id))) {
                     userError("RISCVRangeMap: Virtual address already mapped");
-                    /* TODO: change to seL4_DeleteFirst when unmapping is also supported */
-                    current_syscall_error.type = seL4_InvalidArgument;
-                    current_syscall_error.invalidArgumentNumber = 0;
+                    current_syscall_error.type = seL4_DeleteFirst;
                     return EXCEPTION_SYSCALL_ERROR;
                 }
             }
@@ -1555,13 +1562,14 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             rt[cell_count].words[0] = -1ull;
             rt[cell_count].words[1] = -1ull;
 
-            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64) + (cell_count - 1);
-            uint8_t *perms_asid = perms_sup + (params.T * asid);
+            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64);
+            uint8_t *perms_secdiv = perms_sup + (params.T * secdiv_id);
             word_t read = RISCVGetReadFromVMRights(vm_rights);
             word_t write = RISCVGetWriteFromVMRights(vm_rights);
             bool_t exec = !vm_attributes_get_riscvExecuteNever(attr);
             /* Set permissions */
-            *perms_sup = *perms_asid = rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
+            perms_sup[cell_count - 1] = perms_secdiv[cell_count - 1] =
+                rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
 
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;
@@ -1589,14 +1597,19 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
         case RISCVRangeGetAddress: {
             word_t vaddr = getSyscallArg(0, buffer);
             cap_t rtCap = current_extra_caps.excaprefs[0]->cap;
+            secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(rtCap));
             unsigned int cell_count = rt_cell_count(rt);
+            rt_parameters_t params = get_rt_parameters(cell_count);
+
+            uint8_t *perms = (uint8_t *)(rt) + (params.S * 64) + (params.T * secdiv_id);
 
             for (unsigned int i = 0; i < cell_count; i++) {
                 rtcell_t cell = rt[i];
                 word_t vpn_start = rtcell_get_vpn_start(cell);
-                if(vaddr == (vpn_start << seL4_PageBits)) {
-                    /* Found cell with given virtual address */
+                if(vaddr == (vpn_start << seL4_PageBits) &&
+                   rtperm_get_valid(rtperm_from_uint8(perms[i]))) {
+                    /* Found cell with given virtual address that is mapped into the SecDiv */
                     word_t ppn = rtcell_get_ppn(cell);
 
                     /* Return physical address in first message register */
@@ -1872,18 +1885,18 @@ void Arch_userStackTrace(tcb_t *tptr)
     }
 
 #ifdef CONFIG_RISCV_SECCELL
-    /* TODO: ASID-based access-control even necessary? I mean, we're in kernel space here... */
-    asid_t asid = getRegister(tptr, ReturnUID);
+    /* TODO: SecDiv-based access-control even necessary? I mean, we're in kernel space here... */
+    secdivid_t secdiv_id = getRegister(tptr, ReturnUID);
     rtcell_t *vspace_root = RT_PTR(pptr_of_cap(threadRoot));
 
     unsigned int cell_count = rt_cell_count(vspace_root);
     rt_parameters_t params = get_rt_parameters(cell_count);
-    uint8_t *asid_perms = (uint8_t *)(vspace_root) + (params.S * 64) + (params.T * asid);
+    uint8_t *secdiv_perms = (uint8_t *)(vspace_root) + (params.S * 64) + (params.T * secdiv_id);
 
     for (int i = 0; i < CONFIG_USER_STACK_TRACE_LENGTH; i++) {
         word_t address = sp + (i * sizeof(word_t));
         lookupRTCell_ret_t ret = lookupRTCell(vspace_root, address);
-        if (rtperm_get_valid(rtperm_from_uint8(asid_perms + ret.rtSlotIndex))) {
+        if (rtperm_get_valid(rtperm_from_uint8(secdiv_perms[ret.rtSlotIndex]))) {
             pptr_t pptr = (pptr_t)(getPPtrFromHWRTCell(vspace_root + ret.rtSlotIndex));
             word_t *value = (word_t *)((word_t)pptr + (address & MASK(ret.rSizeBits)));
             printf("0x%lx: 0x%lx\n", (long) address, (long) *value);

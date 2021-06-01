@@ -79,8 +79,8 @@ typedef pte_t pde_t;
    the defined structure (see structures.bf) */
 
 /* Create a permission structure from a byte-sized permission table entry */
-static inline rtperm_t rtperm_from_uint8(uint8_t *encoded_perms) {
-    rtperm_t perms = { .words = {(word_t)*encoded_perms} };
+static inline rtperm_t rtperm_from_uint8(uint8_t encoded_perms) {
+    rtperm_t perms = { .words = {(word_t)encoded_perms} };
     return perms;
 }
 
