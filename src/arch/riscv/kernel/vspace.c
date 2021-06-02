@@ -929,6 +929,10 @@ void unmapRange(asid_t asid, vptr_t vptr, pptr_t pptr)
         return;
     }
 
+    /* Bring pointers into the correct format for following comparisons */
+    vptr = (vptr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+    paddr_t paddr = addrFromPPtr((void *)pptr) >> seL4_PageBits;
+
     secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
 
     rtcell_t *rt = RT_PTR(find_ret.vspace_root);
@@ -939,9 +943,8 @@ void unmapRange(asid_t asid, vptr_t vptr, pptr_t pptr)
     for (unsigned int i = 0; i < cell_count; i++) {
         rtcell_t cell = rt[i];
 
-        word_t vpn_start = rtcell_get_vpn_start(cell);
-        if (vptr == (vpn_start << seL4_PageBits) &&
-            pptr == rtcell_get_ppn(cell)) {
+        if (vptr == rtcell_get_vpn_start(cell) &&
+            paddr == rtcell_get_ppn(cell)) {
             rtperm_t cell_perms = rtperm_from_uint8(perms[i]);
             cell_perms = rtperm_set_valid(cell_perms, 0);
             perms[i] = rtperm_to_uint8(cell_perms);
@@ -1570,6 +1573,11 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             /* Set permissions */
             perms_sup[cell_count - 1] = perms_secdiv[cell_count - 1] =
                 rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
+
+            /* Update capability */
+            cap = cap_range_cap_set_capRMappedASID(cap, asid);
+            cap = cap_range_cap_set_capRMappedAddress(cap, vaddr);
+            cte->cap = cap;
 
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;

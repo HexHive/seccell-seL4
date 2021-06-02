@@ -112,7 +112,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     /* If the target object is a SecCell range, is it at least size 12?
        Range size is given as actual size, not as number of bits => compare to
        shifted range size */
-    if (newType == seL4_RISCV_RangeObject && userObjSize < (1ull << seL4_MinRangeBits)) {
+    if (newType == seL4_RISCV_RangeObject && userObjSize < BIT(seL4_MinRangeBits)) {
         userError("Untyped Retype: Requested range size too small.");
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 1;
