@@ -131,12 +131,14 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
         break;
 #ifdef CONFIG_RISCV_SECCELL
     case cap_range_cap:
-        /* TODO: Currently no support for unmapping => want to find the permissions */
-        /* in the range table and set it to invalid */
-        if (cap_range_cap_get_capRMappedASID(cap)) {
+        /* Force unmapping for any SecDiv since we're finalising the capability to it */
+        if (cap_range_cap_get_capRMappedASID(cap) != asidInvalid) {
             unmapRange(cap_range_cap_get_capRMappedASID(cap),
                        cap_range_cap_get_capRMappedAddress(cap),
-                       cap_range_cap_get_capRBasePtr(cap));
+                       cap_range_cap_get_capRMappedAddress(cap) +
+                           cap_range_cap_get_capRSize(cap) - 1,
+                       cap_range_cap_get_capRBasePtr(cap),
+                       true);
         }
         break;
     case cap_range_table_cap:

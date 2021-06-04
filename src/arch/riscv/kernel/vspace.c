@@ -174,6 +174,29 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, unsigned int n_
     }
 }
 
+static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsigned int index)
+{
+    /* TODO: add range table resizing (shrinking) if necessary! */
+    /* TODO: get number of secdivs from TCB or range table, currently set it to 2:
+       the kernel and the root thread */
+    unsigned int n_secdivs = 2;
+    unsigned int cell_count = rt_cell_count(range_table);
+
+    /* The amount of memory to shift back to fill the empty space caused by the deleted cell */
+    size_t length = (cell_count - index) * sizeof(rtcell_t);
+    /* Actually shift the cells, including the range list end marker */
+    memcpy((void *)(range_table + index), (void *)(range_table + index + 1), length);
+
+    uint8_t *perms = (uint8_t *)(range_table) + (params->S * 64);
+    /* The amount of memory to shift back to fill the empty space caused by deleted permissions */
+    length = params->T - (index + 1);
+    /* Actually shift the permissions for all SecDivs */
+    for (secdivid_t secdiv_id = 0; secdiv_id < n_secdivs; secdiv_id++) {
+        uint8_t *secdiv_perms = perms + (params->T * secdiv_id);
+        memcpy((void *)(secdiv_perms + index), (void *)(secdiv_perms + index + 1), length);
+    }
+}
+
 static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, secdivid_t secdiv_id)
 {
     /* TODO: seems a little bit too hacky for now... */
@@ -918,12 +941,74 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
 }
 
 #ifdef CONFIG_RISCV_SECCELL
-void unmapRange(asid_t asid, vptr_t vptr, pptr_t pptr)
+exception_t unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bool_t brute)
 {
-    /* For now, unmapping a range means invalidating it for the specific SecDiv.
-       Removing ranges completely is more difficult because we'd have to check
-       whether some (other) SecDiv still tries to access it.
-       On top, we want to prevent permission table fragmentation for now. */
+    findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+    if (find_ret.status != EXCEPTION_NONE) {
+        return find_ret.status;
+    }
+
+    /* Bring pointers into the correct format for following comparisons */
+    vptr_start = (vptr_start >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+    vptr_end = (vptr_end >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+    paddr_t paddr = addrFromPPtr((void *)pptr) >> seL4_PageBits;
+
+    secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+    /* TODO: retrieve number of SecDivs here: either from the TCB or from the range
+       table, depending on the upcoming implementation! For now, set it to 2:
+       kernel + root thread */
+    unsigned int n_secdivs = 2;
+
+    rtcell_t *rt = RT_PTR(find_ret.vspace_root);
+    unsigned int cell_count = rt_cell_count(rt);
+    rt_parameters_t params = get_rt_parameters(cell_count);
+    uint8_t *perms = (uint8_t *)(rt) + (params.S * 64);
+
+    for (unsigned i = 0; i < cell_count; i++) {
+        rtcell_t cell = rt[i];
+
+        if (vptr_start == rtcell_get_vpn_start(cell) &&
+            vptr_end == rtcell_get_vpn_end_helper(cell) &&
+            paddr == rtcell_get_ppn(cell)) {
+            /* Found cell with the requested characteristics */
+
+            /* Brute unmapping means unmapping a range no matter which SecDiv might still
+            have it mapped. Otherwise, unmapping only works if no SecDiv has R/W/X access
+            and the valid bit set. */
+            if (!brute) {
+                /* Check whether the range is still accessible to any SecDiv other than the
+                one that requested the unmapping */
+                for (secdivid_t curr_secdiv = 0; curr_secdiv < n_secdivs; curr_secdiv++) {
+                    if (curr_secdiv != secdiv_id) {
+                        uint8_t *secdiv_perms = perms + (params.T * curr_secdiv);
+                        rtperm_t curr_perms = rtperm_from_uint8(secdiv_perms[i]);
+
+                        if (rtperm_get_valid(curr_perms) &&
+                            (rtperm_get_read(curr_perms) ||
+                             rtperm_get_write(curr_perms) ||
+                             rtperm_get_exec(curr_perms))) {
+                            /* Cell is valid and actually accessible by the SecDiv
+                               => can't unmap */
+                            return EXCEPTION_SYSCALL_ERROR;
+                        }
+                    }
+                }
+            }
+            /* Finally unmap the range, i.e., remove it from the range table */
+            rt_delete_cell(rt, &params, i);
+            /* There can only be one range with those exact parameters (virtual and physical addresses), so stop iterating when we found it */
+            break;
+        }
+    }
+    /* Make sure the unmapping is propagated to memory */
+    sfence();
+    return EXCEPTION_NONE;
+}
+
+void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr)
+{
+    /* TODO: rework and check functionality - this is basically just a wrapper
+       for legacy code currently! */
     findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
     if (find_ret.status != EXCEPTION_NONE) {
         return;
@@ -1400,8 +1485,8 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
 
             unsigned int cell_count = rt_cell_count(rt);
             /* Resize range table if required */
-            /* TODO: Why n_secdiv_ids == 1 ? Should get the correct number somehow */
-            rt_resize_inc(rt, cell_count, 1);
+            /* TODO: n_secdiv_ids = 2 (kernel + root thread) for now. Should get the correct number somehow */
+            rt_resize_inc(rt, cell_count, 2);
 
             cell_count++;
             rt_parameters_t params = get_rt_parameters(cell_count);
@@ -1431,7 +1516,7 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
                 current_syscall_error.type = seL4_RevokeFirst;
                 return EXCEPTION_SYSCALL_ERROR;
             }
-            asid_t asid = read_urid();
+            asid_t asid = cap_range_table_cap_get_capRTMappedASID(cap);
             /* Make sure that we do not unmap the top-level range table */
             if (likely(cap_range_table_cap_get_capRTIsMapped(cap))) {
                 findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
@@ -1447,9 +1532,9 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
 
             /* Unmap memory (just like a normal range) */
-            unmapRange(asid,
+            /* unmapRange(asid,
                        cap_range_table_cap_get_capRTMappedAddress(cap),
-                       cap_range_table_cap_get_capRTBasePtr(cap));
+                       cap_range_table_cap_get_capRTBasePtr(cap)); */
             /* Invalidate capability */
             cap_t slot_cap = cte->cap;
             slot_cap = cap_range_table_cap_set_capRTMappedAddress(slot_cap, 0);
@@ -1552,8 +1637,8 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             paddr_t range_paddr = addrFromPPtr((void*) cap_range_cap_get_capRBasePtr(cap));
 
             unsigned int cell_count = rt_cell_count(rt);
-            /* TODO: Why n_secdiv_ids == 1 ? Should get the correct number somehow */
-            rt_resize_inc(rt, cell_count, 1);
+            /* TODO: n_secdiv_ids = 2 (kernel + root thread) for now. Should get the correct number somehow */
+            rt_resize_inc(rt, cell_count, 2);
 
             cell_count++;
             rt_parameters_t params = get_rt_parameters(cell_count);
@@ -1590,7 +1675,14 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             if (cap_range_cap_get_capRMappedASID(cap) != asidInvalid) {
                 unmapRange(cap_range_cap_get_capRMappedASID(cap),
                            cap_range_cap_get_capRMappedAddress(cap),
-                           cap_range_cap_get_capRBasePtr(cap)
+                           cap_range_cap_get_capRMappedAddress(cap) +
+                               cap_range_cap_get_capRSize(cap) - 1,
+                           cap_range_cap_get_capRBasePtr(cap),
+                           /* TODO: disable brute unmapping once SecDivs can change permissions
+                              currently, unmapping would always fail because there is at least the
+                              kernel SecDiv (id = 0) having access */
+                           /* false */
+                           true
                           );
             }
             /* Invalidate capability */
