@@ -244,7 +244,7 @@ typedef struct reply reply_t;
 
 /* TCB: size >= 18 words + sizeof(arch_tcb_t) + 1 word on MCS (aligned to nearest power of 2) */
 struct tcb {
-    /* arch specific tcb state (including context)*/
+    /* arch specific tcb state (including context) */
     arch_tcb_t tcbArch;
 
     /* Thread state, 3 words */
@@ -252,7 +252,7 @@ struct tcb {
 
     /* Notification that this TCB is bound to. If this is set, when this TCB waits on
      * any sync endpoint, it may receive a signal from a Notification object.
-     * 1 word*/
+     * 1 word */
     notification_t *tcbBoundNotification;
 
     /* Current fault, 2 words */

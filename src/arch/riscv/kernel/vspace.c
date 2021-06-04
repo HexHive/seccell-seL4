@@ -151,7 +151,7 @@ static unsigned int rt_cell_count(rtcell_t *rt)
     return count;
 }
 
-static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, unsigned int n_secdiv_ids)
+static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv_ids)
 {
     rt_parameters_t old_params = get_rt_parameters(cell_count);
     rt_parameters_t new_params = get_rt_parameters(cell_count + 1);
@@ -177,9 +177,7 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, unsigned int n_
 static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsigned int index)
 {
     /* TODO: add range table resizing (shrinking) if necessary! */
-    /* TODO: get number of secdivs from TCB or range table, currently set it to 2:
-       the kernel and the root thread */
-    unsigned int n_secdivs = 2;
+    word_t n_secdivs = getNSecDivs(NODE_STATE(ksCurThread));
     unsigned int cell_count = rt_cell_count(range_table);
 
     /* The amount of memory to shift back to fill the empty space caused by the deleted cell */
@@ -954,17 +952,14 @@ exception_t unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t p
     paddr_t paddr = addrFromPPtr((void *)pptr) >> seL4_PageBits;
 
     secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
-    /* TODO: retrieve number of SecDivs here: either from the TCB or from the range
-       table, depending on the upcoming implementation! For now, set it to 2:
-       kernel + root thread */
-    unsigned int n_secdivs = 2;
+    word_t n_secdivs = getNSecDivs(NODE_STATE(ksCurThread));
 
     rtcell_t *rt = RT_PTR(find_ret.vspace_root);
     unsigned int cell_count = rt_cell_count(rt);
     rt_parameters_t params = get_rt_parameters(cell_count);
     uint8_t *perms = (uint8_t *)(rt) + (params.S * 64);
 
-    for (unsigned i = 0; i < cell_count; i++) {
+    for (unsigned int i = 0; i < cell_count; i++) {
         rtcell_t cell = rt[i];
 
         if (vptr_start == rtcell_get_vpn_start(cell) &&
@@ -1485,8 +1480,7 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
 
             unsigned int cell_count = rt_cell_count(rt);
             /* Resize range table if required */
-            /* TODO: n_secdiv_ids = 2 (kernel + root thread) for now. Should get the correct number somehow */
-            rt_resize_inc(rt, cell_count, 2);
+            rt_resize_inc(rt, cell_count, getNSecDivs(NODE_STATE(ksCurThread)));
 
             cell_count++;
             rt_parameters_t params = get_rt_parameters(cell_count);
@@ -1637,8 +1631,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             paddr_t range_paddr = addrFromPPtr((void*) cap_range_cap_get_capRBasePtr(cap));
 
             unsigned int cell_count = rt_cell_count(rt);
-            /* TODO: n_secdiv_ids = 2 (kernel + root thread) for now. Should get the correct number somehow */
-            rt_resize_inc(rt, cell_count, 2);
+            rt_resize_inc(rt, cell_count, getNSecDivs(NODE_STATE(ksCurThread)));
 
             cell_count++;
             rt_parameters_t params = get_rt_parameters(cell_count);

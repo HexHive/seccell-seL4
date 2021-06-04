@@ -113,6 +113,10 @@ typedef struct user_fpu_state {
 
 struct user_context {
     word_t registers[n_contextRegisters];
+#ifdef CONFIG_RISCV_SECCELL
+    /* The number of security divisions in the current thread */
+    word_t n_secdivs;
+#endif /* CONFIG_RISCV_SECCELL */
 #ifdef CONFIG_HAVE_FPU
     user_fpu_state_t fpuState;
 #endif
@@ -128,6 +132,8 @@ static inline void Arch_initContext(user_context_t *context)
     /* TODO: Actually put a constant here => currently causes include problems */
     /* Also reason about whether this assumption is always true */
     context->registers[ReturnUID] = 1;
+    /* 2 SecDivs on initialization: the global kernel mappings (SecDiv 0) and the new userspace thread (SecDiv 1) */
+    context->n_secdivs = 2;
 #endif /* CONFIG_RISCV_SECCELL */
 }
 
