@@ -465,7 +465,7 @@ void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
     rtcell_t *rt = RT_PTR(pptr_of_cap(vspace_cap));
     pptr_t frame_pptr = pptr_of_cap(range_cap);
     vptr_t frame_vptr = cap_range_cap_get_capRMappedAddress(range_cap);
-    word_t size = cap_range_cap_get_capRSize(range_cap);
+    word_t size = cap_range_cap_get_capRSize(range_cap) << seL4_MinRangeBits;
 
     unsigned int cell_count = rt_cell_count(rt);
     /* Resize range table if required */
@@ -1561,7 +1561,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             word_t w_rightsMask = getSyscallArg(1, buffer);
             vm_attributes_t attr = vmAttributesFromWord(getSyscallArg(2, buffer));
             cap_t rtCap = current_extra_caps.excaprefs[0]->cap;
-            word_t size = cap_range_cap_get_capRSize(cap);
+            word_t size = cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits;
             vm_rights_t capVMRights = cap_range_cap_get_capRVMRights(cap);
 
             if (unlikely(cap_get_capType(rtCap) != cap_range_table_cap ||
@@ -1611,7 +1611,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                 }
 
                 word_t mapped_vaddr = cap_range_cap_get_capRMappedAddress(cap);
-                if (unlikely(mapped_vaddr != vaddr >> seL4_PageBits)) {
+                if (unlikely(mapped_vaddr != vaddr)) {
                     userError("RISCVRangeMap: Attempt to map range at multiple addresses");
                     current_syscall_error.type = seL4_InvalidCapability;
                     current_syscall_error.invalidArgumentNumber = 0;
@@ -1669,7 +1669,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                 unmapRange(cap_range_cap_get_capRMappedASID(cap),
                            cap_range_cap_get_capRMappedAddress(cap),
                            cap_range_cap_get_capRMappedAddress(cap) +
-                               cap_range_cap_get_capRSize(cap) - 1,
+                               (cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits) - 1,
                            cap_range_cap_get_capRBasePtr(cap),
                            /* TODO: disable brute unmapping once SecDivs can change permissions
                               currently, unmapping would always fail because there is at least the

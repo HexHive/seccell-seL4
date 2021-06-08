@@ -82,12 +82,12 @@ BOOT_CODE cap_t create_mapped_it_frame_cap(cap_t pd_cap, pptr_t pptr, vptr_t vpt
 BOOT_CODE cap_t create_mapped_it_range_cap(cap_t rt_cap, pptr_t pptr, vptr_t vptr, word_t length, asid_t asid)
 {
     cap_t cap = cap_range_cap_new(
-                    asid,                           /* capRMappedASID       */
-                    pptr,                           /* capRBasePtr          */
-                    wordFromVMRights(VMReadWrite),  /* capRVMRights         */
-                    0,                              /* capRIsDevice         */
-                    length,                         /* capRSize             */
-                    vptr                            /* capRMappedAddress    */
+                    asid,                                                       /* capRMappedASID       */
+                    pptr,                                                       /* capRBasePtr          */
+                    wordFromVMRights(VMReadWrite),                              /* capRVMRights         */
+                    0,                                                          /* capRIsDevice         */
+                    ROUND_UP(length, seL4_MinRangeBits) >> seL4_MinRangeBits,   /* capRSize             */
+                    vptr                                                        /* capRMappedAddress    */
                 );
 
     map_it_range_cap(rt_cap, cap);

@@ -42,6 +42,9 @@
 #define seL4_SecCellsPPNBits   44
 #define seL4_SecCellsVPNBits   36
 #define seL4_MinRangeBits      12
+/* TODO: range capability can only hold 27 bits for the size of a range currently,
+   increased to 39 bits by only storing size at 4k granularity => should we adapt
+   the general maximum range size? */
 #define seL4_MaxRangeBits      (seL4_SecCellsVPNBits + seL4_MinRangeBits)
 
 #define seL4_NumASIDPoolsBits   7

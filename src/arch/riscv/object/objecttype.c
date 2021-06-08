@@ -136,7 +136,7 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
             unmapRange(cap_range_cap_get_capRMappedASID(cap),
                        cap_range_cap_get_capRMappedAddress(cap),
                        cap_range_cap_get_capRMappedAddress(cap) +
-                           cap_range_cap_get_capRSize(cap) - 1,
+                           (cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits) - 1,
                        cap_range_cap_get_capRBasePtr(cap),
                        true);
         }
@@ -385,12 +385,12 @@ cap_t Arch_createObject(object_t t, void *regionBase, word_t userSize, bool_t
 #ifdef CONFIG_RISCV_SECCELL
     case seL4_RISCV_RangeObject:
         return cap_range_cap_new(
-                   asidInvalid,                    /* capRMappedASID       */
-                   (word_t) regionBase,            /* capRBasePtr          */
-                   wordFromVMRights(VMReadWrite),  /* capRVMRights         */
-                   deviceMemory,                   /* capRIsDevice         */
-                   userSize,                       /* capRSize             */
-                   0                               /* capRMappedAddress    */
+                   asidInvalid,                                                 /* capRMappedASID       */
+                   (word_t) regionBase,                                         /* capRBasePtr          */
+                   wordFromVMRights(VMReadWrite),                               /* capRVMRights         */
+                   deviceMemory,                                                /* capRIsDevice         */
+                   ROUND_UP(userSize, seL4_MinRangeBits) >> seL4_MinRangeBits,  /* capRSize             */
+                   0                                                            /* capRMappedAddress    */
                );
     case seL4_RISCV_RangeTableObject:
         return cap_range_table_cap_new(
