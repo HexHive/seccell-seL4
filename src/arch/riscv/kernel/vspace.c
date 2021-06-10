@@ -133,7 +133,7 @@ static rt_parameters_t get_rt_parameters(unsigned cell_count)
         S <<= 1;
     }
     /* Note: permissions use uint8_t, minimum is 64 bytes */
-    size_t T = MAX(64 / sizeof(rtcell_t) * S, 64);
+    size_t T = MAX(64 * S / sizeof(rtcell_t), 64);
 
     return (rt_parameters_t) {R, S, T};
 }
@@ -166,7 +166,8 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv
             uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (new_params.T * secdiv_id);
 
             /* Copy permissions to new location */
-            /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled */
+            /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled.
+               Also, use old cell count since adding cells and perms happens only after resizing */
             memcpy(new_perms, old_perms, cell_count);
         }
         /* Clear (now unused) region used by old permissions */
@@ -174,9 +175,29 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv
     }
 }
 
+static void rt_resize_dec(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv_ids)
+{
+    rt_parameters_t old_params = get_rt_parameters(cell_count);
+    rt_parameters_t new_params = get_rt_parameters(cell_count - 1);
+
+    /* Only resize if it is even necessary */
+    if (old_params.S != new_params.S) {
+        for (unsigned int i = 0; i < n_secdiv_ids; i++) {
+            uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (new_params.T * i);
+            uint8_t *old_perms = (uint8_t *)(rt) + (64 * old_params.S) + (old_params.T * i);
+
+            /* Copy permissions to new location */
+            /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled
+               Also, use new cell count since deleting cells and perms happens before resizing */
+            memcpy(new_perms, old_perms, cell_count - 1);
+            /* Clear (now unused) region used by old permissions */
+            memset(old_perms, 0, cell_count - 1);
+        }
+    }
+}
+
 static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsigned int index)
 {
-    /* TODO: add range table resizing (shrinking) if necessary! */
     word_t n_secdivs = getNSecDivs(NODE_STATE(ksCurThread));
     unsigned int cell_count = rt_cell_count(range_table);
 
@@ -184,6 +205,8 @@ static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsig
     size_t length = (cell_count - index) * sizeof(rtcell_t);
     /* Actually shift the cells, including the range list end marker */
     memcpy((void *)(range_table + index), (void *)(range_table + index + 1), length);
+    /* Zero out the memory at the end of the cell list that was shifted */
+    memzero((void *)(range_table + cell_count), sizeof(rtcell_t));
 
     uint8_t *perms = (uint8_t *)(range_table) + (params->S * 64);
     /* The amount of memory to shift back to fill the empty space caused by deleted permissions */
@@ -192,7 +215,11 @@ static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsig
     for (secdivid_t secdiv_id = 0; secdiv_id < n_secdivs; secdiv_id++) {
         uint8_t *secdiv_perms = perms + (params->T * secdiv_id);
         memcpy((void *)(secdiv_perms + index), (void *)(secdiv_perms + index + 1), length);
+        /* Zero out the memory at the end of the permission list that was shifted */
+        secdiv_perms[params->T - 1] = 0;
     }
+    /* If necessary, the range table is now shrunk, i.e., the permissions are moved to the correct offset */
+    rt_resize_dec(range_table, cell_count, n_secdivs);
 }
 
 static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, secdivid_t secdiv_id)
