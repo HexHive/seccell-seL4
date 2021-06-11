@@ -157,12 +157,11 @@ BOOT_CODE static word_t calculate_rootserver_size(v_region_t v_reg, word_t extra
     size += BIT(seL4_MinSchedContextBits); // root sched context
 #endif
 #ifdef CONFIG_RISCV_SECCELL
-    /* TODO: uncomment / replace => don't want to break everything right now */
-    /* since some parts still rely on paging structures */
-    /* return size + BIT(seL4_PageTableBits); */
-#endif /* CONFIG_RISCV_SECCELL */
+    return size;
+#else
     /* for all archs, seL4_PageTable Bits is the size of all non top-level paging structures */
     return size + arch_get_n_paging(v_reg) * BIT(seL4_PageTableBits);
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 BOOT_CODE static void maybe_alloc_extra_bi(word_t cmp_size_bits, word_t extra_bi_size_bits)
@@ -207,13 +206,13 @@ BOOT_CODE void create_rootserver_objects(pptr_t start, v_region_t v_reg, word_t 
     rootserver.tcb = alloc_rootserver_obj(seL4_TCBBits, 1);
 #endif
 
+#ifndef CONFIG_RISCV_SECCELL
     /* paging structures are 4k on every arch except aarch32 (1k) */
-    /* Note: this is never even used on RISC-V SecCells but we don't remove it for now
-       to not mess with later assertions and memory alignment */
-    /* TODO: remove paging memory objects */
+    /* Note: this is never used on RISC-V SecCells and therefore excluded through the preprocessor */
     word_t n = arch_get_n_paging(v_reg);
     rootserver.paging.start = alloc_rootserver_obj(seL4_PageTableBits, n);
     rootserver.paging.end = rootserver.paging.start + n * BIT(seL4_PageTableBits);
+#endif /* CONFIG_RISCV_SECCELL */
 
     /* for most archs, TCBs are smaller than page tables */
 #if seL4_TCBBits < seL4_PageTableBits

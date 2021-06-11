@@ -121,7 +121,9 @@ typedef struct {
 #ifdef CONFIG_KERNEL_MCS
     pptr_t sc;
 #endif
+#ifndef CONFIG_RISCV_SECCELL
     region_t paging;
+#endif /* CONFIG_RISCV_SECCELL */
 } rootserver_mem_t;
 
 extern rootserver_mem_t rootserver;
@@ -136,6 +138,7 @@ static inline BOOT_CODE word_t get_n_paging(v_region_t v_reg, word_t bits)
     return (end - start) / BIT(bits);
 }
 
+#ifndef CONFIG_RISCV_SECCELL
 /* allocate a page table sized structure from rootserver.paging */
 static inline BOOT_CODE pptr_t it_alloc_paging(void)
 {
@@ -144,6 +147,7 @@ static inline BOOT_CODE pptr_t it_alloc_paging(void)
     assert(rootserver.paging.start <= rootserver.paging.end);
     return allocated;
 }
+#endif /* CONFIG_RISCV_SECCELL */
 
 /* return the amount of paging structures required to cover v_reg */
 word_t arch_get_n_paging(v_region_t it_veg);
