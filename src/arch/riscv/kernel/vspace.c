@@ -966,11 +966,11 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
 }
 
 #ifdef CONFIG_RISCV_SECCELL
-exception_t unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bool_t brute)
+void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bool_t brute)
 {
     findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
     if (find_ret.status != EXCEPTION_NONE) {
-        return find_ret.status;
+        return;
     }
 
     /* Bring pointers into the correct format for following comparisons */
@@ -999,32 +999,39 @@ exception_t unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t p
             and the valid bit set. */
             if (!brute) {
                 /* Check whether the range is still accessible to any SecDiv other than the
-                one that requested the unmapping */
-                for (secdivid_t curr_secdiv = 0; curr_secdiv < n_secdivs; curr_secdiv++) {
+                one that requested the unmapping or the kernel */
+                for (secdivid_t curr_secdiv = 1; curr_secdiv < n_secdivs; curr_secdiv++) {
                     if (curr_secdiv != secdiv_id) {
-                        uint8_t *secdiv_perms = perms + (params.T * curr_secdiv);
-                        rtperm_t curr_perms = rtperm_from_uint8(secdiv_perms[i]);
+                        uint8_t *curr_perms_ptr = perms + (params.T * curr_secdiv);
+                        rtperm_t curr_perms = rtperm_from_uint8(curr_perms_ptr[i]);
 
                         if (rtperm_get_valid(curr_perms) &&
                             (rtperm_get_read(curr_perms) ||
                              rtperm_get_write(curr_perms) ||
                              rtperm_get_exec(curr_perms))) {
-                            /* Cell is valid and actually accessible by the SecDiv
-                               => can't unmap */
-                            return EXCEPTION_SYSCALL_ERROR;
+                            /* Cell is valid and actually accessible by another SecDiv
+                               => can't unmap, invalidate instead */
+                            uint8_t *secdiv_perms_ptr = perms + (params.T * secdiv_id);
+                            rtperm_t cell_perms = rtperm_from_uint8(secdiv_perms_ptr[i]);
+                            cell_perms = rtperm_set_valid(cell_perms, 0);
+                            secdiv_perms_ptr[i] = rtperm_to_uint8(cell_perms);
+
+                            /* Make sure the invalidation is propagated to memory */
+                            sfence();
+                            return;
                         }
                     }
                 }
             }
-            /* Finally unmap the range, i.e., remove it from the range table */
+            /* We arrive here if either brute unmapping was chosen or the range is not mapped into
+               any other SecDiv => unmap the range, i.e., remove it from the range table */
             rt_delete_cell(rt, &params, i);
+            /* Make sure the unmapping is propagated to memory */
+            sfence();
             /* There can only be one range with those exact parameters (virtual and physical addresses), so stop iterating when we found it */
-            break;
+            return;
         }
     }
-    /* Make sure the unmapping is propagated to memory */
-    sfence();
-    return EXCEPTION_NONE;
 }
 
 void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr)
@@ -1698,11 +1705,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                            cap_range_cap_get_capRMappedAddress(cap) +
                                (cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits) - 1,
                            cap_range_cap_get_capRBasePtr(cap),
-                           /* TODO: disable brute unmapping once SecDivs can change permissions
-                              currently, unmapping would always fail because there is at least the
-                              kernel SecDiv (id = 0) having access */
-                           /* false */
-                           true
+                           false
                           );
             }
             /* Invalidate capability */
