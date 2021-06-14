@@ -1875,9 +1875,9 @@ exception_t decodeRISCVMMUInvocation(word_t label, word_t length, cptr_t cptr,
 #ifdef CONFIG_RISCV_SECCELL
                 &&
                 (cap_get_capType(vspaceCap) != cap_range_table_cap ||
-                 cap_range_table_cap_get_capRTIsMapped(vspaceCap)))
+                 cap_range_table_cap_get_capRTIsMapped(vspaceCap))
 #endif /* CONFIG_RISCV_SECCELL */
-            ) {
+           )) {
             userError("RISCVASIDPool: Invalid vspace root.");
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 1;
