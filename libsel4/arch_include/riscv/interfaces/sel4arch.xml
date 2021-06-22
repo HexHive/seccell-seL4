@@ -215,15 +215,10 @@
             <description>
                 <docref>See <autoref label="ch:vspace"/>.</docref>
             </description>
-            <param dir="in" name="vspace" type="seL4_RISCV_RangeTable">
-                <description>VSpace to search in.</description>
-            </param>
-            <param dir="in" name="vaddr" type="seL4_Word">
-                <description>Virtual (base) address of the desired range.</description>
-            </param>
             <return>
-                The physical base address of the desired range.
-                <docref>See <autoref label='sec:errors'/> for a description
+                A <texttt text='seL4_RISCV_Range_GetAddress_t'/> struct that contains a
+                <texttt text='seL4_Word paddr'/>, which holds the physical address of the range,
+                and <texttt text='int error'/>. <docref>See <autoref label='sec:errors'/> for a description
                 of the message register and tag contents upon error.</docref>
             </return>
             <param dir="out" name="paddr" type="seL4_Word"/>

@@ -1718,32 +1718,21 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
         }
 
         case RISCVRangeGetAddress: {
-            word_t vaddr = getSyscallArg(0, buffer);
-            cap_t rtCap = current_extra_caps.excaprefs[0]->cap;
-            secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
-            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(rtCap));
-            unsigned int cell_count = rt_cell_count(rt);
-            rt_parameters_t params = get_rt_parameters(cell_count);
+            /* Check that there are enough message registers */
+            assert(n_msgRegisters >= 1);
 
-            uint8_t *perms = (uint8_t *)(rt) + (params.S * 64) + (params.T * secdiv_id);
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
 
-            for (unsigned int i = 0; i < cell_count; i++) {
-                rtcell_t cell = rt[i];
-                word_t vpn_start = rtcell_get_vpn_start(cell);
-                if(vaddr == (vpn_start << seL4_PageBits) &&
-                   rtperm_get_valid(rtperm_from_uint8(perms[i]))) {
-                    /* Found cell with given virtual address that is mapped into the SecDiv */
-                    word_t ppn = rtcell_get_ppn(cell);
+            paddr_t capRBasePtr;
+            /* Get the physical address of this range */
+            capRBasePtr = addrFromPPtr((void *)cap_range_cap_get_capRBasePtr(cap));
 
-                    /* Return physical address in first message register */
-                    setRegister(NODE_STATE(ksCurThread), msgRegisters[0], ppn);
-                    setRegister(NODE_STATE(ksCurThread), msgInfoRegister,
-                                wordFromMessageInfo(seL4_MessageInfo_new(0, 0, 0, 1)));
+            /* Return it in the first message register */
+            setRegister(NODE_STATE(ksCurThread), msgRegisters[0], capRBasePtr);
+            setRegister(NODE_STATE(ksCurThread), msgInfoRegister,
+                        wordFromMessageInfo(seL4_MessageInfo_new(0, 0, 0, 1)));
 
-                    return EXCEPTION_NONE;
-                }
-            }
-            return EXCEPTION_SYSCALL_ERROR;
+            return EXCEPTION_NONE;
         }
 
         default: {
