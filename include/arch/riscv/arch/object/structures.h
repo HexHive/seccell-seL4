@@ -106,6 +106,14 @@ static inline bool_t CONST cap_get_archCapIsPhysical(cap_t cap)
     case cap_page_table_cap:
         return true;
 
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_cap:
+        return true;
+
+    case cap_range_table_cap:
+        return true;
+#endif /* CONFIG_RISCV_SECCELL */
+
     case cap_asid_control_cap:
         return false;
 
@@ -130,6 +138,21 @@ static inline word_t CONST cap_get_archCapSizeBits(cap_t cap)
 
     case cap_page_table_cap:
         return PT_SIZE_BITS;
+
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_cap: {
+        word_t bits = seL4_MinRangeBits;
+        size_t range_size = cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits;
+        while (BIT(bits) < range_size) {
+            bits++;
+        }
+        return bits;
+    }
+
+    /* TODO: Adapt to real range table size */
+    case cap_range_table_cap:
+        return PT_SIZE_BITS;
+#endif /* CONFIG_RISCV_SECCELL */
 
     case cap_asid_control_cap:
         return 0;
@@ -158,11 +181,13 @@ static inline void *CONST cap_get_archCapPtr(cap_t cap)
     case cap_page_table_cap:
         return PT_PTR(cap_page_table_cap_get_capPTBasePtr(cap));
 
+#ifdef CONFIG_RISCV_SECCELL
     case cap_range_cap:
         return (void *)(cap_range_cap_get_capRBasePtr(cap));
 
     case cap_range_table_cap:
         return RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+#endif /* CONFIG_RISCV_SECCELL */
 
     case cap_asid_control_cap:
         return NULL;
