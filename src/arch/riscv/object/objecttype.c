@@ -276,10 +276,9 @@ word_t Arch_getObjectSize(word_t t)
         /* Range objects don't have size set to a number of bits but to the actual
            size => compare to shifted value instead of the number of bits itself, but
            return the number of necessary bits for further processing */
-        if (likely(userObjSize <= (1ull << seL4_MaxRangeBits))) {
-            /* TODO: should we initialize bits with 12 to have a minimum of a page? */
-            word_t bits = 0;
-            while ((1ull << bits) < userObjSize) {
+        if (likely(userObjSize <= BIT(seL4_MaxRangeBits))) {
+            word_t bits = seL4_MinRangeBits;
+            while (BIT(bits) < userObjSize) {
                 bits++;
             }
             return bits;
