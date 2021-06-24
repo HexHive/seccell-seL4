@@ -36,9 +36,8 @@ typedef struct resolve_ret resolve_ret_t;
 
 #ifdef CONFIG_RISCV_SECCELL
 typedef struct {
-    size_t R, /* required number of 64-byte cache lines */
-           S, /* 2^n aligned number of 64-byte cache lines */
-           T; /* space per SecDiv to track cell access rights */
+    size_t S, /* number of 64-byte cache lines for SecCells */
+           T; /* number of 64-byte cache lines for permissions per SecDiv */
 } rt_parameters_t;
 #endif /* CONFIG_RISCV_SECCELL */
 
@@ -125,45 +124,33 @@ static word_t rtcell_get_vpn_end_helper(rtcell_t cell)
     return vpn_end;
 }
 
-static rt_parameters_t get_rt_parameters(unsigned cell_count)
+static rt_parameters_t get_rt_parameters(unsigned int cell_count)
 {
-    size_t S = 1;
-    size_t R = (cell_count * sizeof(rtcell_t) / 64) + 1;
-    while (S < R) {
-        S <<= 1;
-    }
-    /* Note: permissions use uint8_t, minimum is 64 bytes */
-    size_t T = MAX(64 * S / sizeof(rtcell_t), 64);
+    size_t num_perm_lines = ROUND_UP(cell_count, 6) / 64;
+    rt_parameters_t params = {
+        .S = num_perm_lines * 16,
+        .T = num_perm_lines
+    };
 
-    return (rt_parameters_t) {R, S, T};
+    return params;
 }
 
-static unsigned int rt_cell_count(rtcell_t *rt)
+static void rt_resize_inc(rtmeta_t *rt)
 {
-    unsigned int count = 0;
+    unsigned int cell_count = rtmeta_ptr_get_N(rt);
+    unsigned int n_secdiv_ids = rtmeta_ptr_get_M(rt);
 
-    /* End is marked with a cell structure that has all bits set to 1 */
-    while (rt[count].words[0] != -1ull || rt[count].words[1] != -1ull) {
-        /* Increment counter as long as we haven't reached the end */
-        count++;
-    }
-
-    return count;
-}
-
-static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv_ids)
-{
     rt_parameters_t old_params = get_rt_parameters(cell_count);
     rt_parameters_t new_params = get_rt_parameters(cell_count + 1);
 
     /* Only resize if it is even necessary */
-    if (old_params.S != new_params.S) {
+    if (old_params.T != new_params.T) {
         for (unsigned int i = 0; i < n_secdiv_ids; i++) {
             /* Start from the end to not overwrite other data */
             unsigned int secdiv_id = n_secdiv_ids - i - 1;
 
-            uint8_t *old_perms = (uint8_t *)(rt) + (64 * old_params.S) + (old_params.T * secdiv_id);
-            uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (new_params.T * secdiv_id);
+            uint8_t *old_perms = (uint8_t *)(rt) + (64 * old_params.S) + (64 * old_params.T * secdiv_id);
+            uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (64 * new_params.T * secdiv_id);
 
             /* Copy permissions to new location */
             /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled.
@@ -172,19 +159,25 @@ static void rt_resize_inc(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv
         }
         /* Clear (now unused) region used by old permissions */
         memset(((uint8_t *)rt) + (64 * old_params.S), 0, 64 * (new_params.S - old_params.S));
+
+        /* Update metacell value for T */
+        rtmeta_ptr_set_T(rt, new_params.T);
     }
 }
 
-static void rt_resize_dec(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv_ids)
+static void rt_resize_dec(rtmeta_t *rt)
 {
+    unsigned int cell_count = rtmeta_ptr_get_N(rt);
+    unsigned int n_secdiv_ids = rtmeta_ptr_get_M(rt);
+
     rt_parameters_t old_params = get_rt_parameters(cell_count);
     rt_parameters_t new_params = get_rt_parameters(cell_count - 1);
 
     /* Only resize if it is even necessary */
-    if (old_params.S != new_params.S) {
+    if (old_params.T != new_params.T) {
         for (unsigned int i = 0; i < n_secdiv_ids; i++) {
-            uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (new_params.T * i);
-            uint8_t *old_perms = (uint8_t *)(rt) + (64 * old_params.S) + (old_params.T * i);
+            uint8_t *new_perms = (uint8_t *)(rt) + (64 * new_params.S) + (64 * new_params.T * i);
+            uint8_t *old_perms = (uint8_t *)(rt) + (64 * old_params.S) + (64 * old_params.T * i);
 
             /* Copy permissions to new location */
             /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled
@@ -193,13 +186,15 @@ static void rt_resize_dec(rtcell_t *rt, unsigned int cell_count, word_t n_secdiv
             /* Clear (now unused) region used by old permissions */
             memset(old_perms, 0, cell_count - 1);
         }
+        /* Update metacell value for T */
+        rtmeta_ptr_set_T(rt, new_params.T);
     }
 }
 
 static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsigned int index)
 {
-    word_t n_secdivs = getNSecDivs(NODE_STATE(ksCurThread));
-    unsigned int cell_count = rt_cell_count(range_table);
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(range_table));
+    unsigned int n_secdivs = rtmeta_ptr_get_M(RT_META_PTR(range_table));
 
     /* The amount of memory to shift back to fill the empty space caused by the deleted cell */
     size_t length = (cell_count - index) * sizeof(rtcell_t);
@@ -208,31 +203,34 @@ static void rt_delete_cell(rtcell_t *range_table, rt_parameters_t *params, unsig
     /* Zero out the memory at the end of the cell list that was shifted */
     memzero((void *)(range_table + cell_count), sizeof(rtcell_t));
 
-    uint8_t *perms = (uint8_t *)(range_table) + (params->S * 64);
+    uint8_t *perms = (uint8_t *)(range_table) + (64 * params->S );
     /* The amount of memory to shift back to fill the empty space caused by deleted permissions */
-    length = params->T - (index + 1);
+    length = (64 * params->T) - (index + 1);
     /* Actually shift the permissions for all SecDivs */
     for (secdivid_t secdiv_id = 0; secdiv_id < n_secdivs; secdiv_id++) {
-        uint8_t *secdiv_perms = perms + (params->T * secdiv_id);
+        uint8_t *secdiv_perms = perms + (64 * params->T * secdiv_id);
         memcpy((void *)(secdiv_perms + index), (void *)(secdiv_perms + index + 1), length);
         /* Zero out the memory at the end of the permission list that was shifted */
-        secdiv_perms[params->T - 1] = 0;
+        secdiv_perms[(64 * params->T) - 1] = 0;
     }
     /* If necessary, the range table is now shrunk, i.e., the permissions are moved to the correct offset */
-    rt_resize_dec(range_table, cell_count, n_secdivs);
+    rt_resize_dec(RT_META_PTR(range_table));
+    rtmeta_ptr_set_N(RT_META_PTR(range_table), cell_count - 1);
 }
 
 static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, secdivid_t secdiv_id)
 {
     /* TODO: seems a little bit too hacky for now... */
-    unsigned int cell_count = rt_cell_count(range_table);
-    rt_parameters_t params = get_rt_parameters(cell_count);
-
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(range_table));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(range_table)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(range_table))
+    };
     /* Bring vaddr into correct format for comparisons */
     vaddr = (vaddr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
 
     /* Get permissions for the requested SecDiv */
-    uint8_t *perms_ptr = (uint8_t *)(range_table) + (params.S * 64) + (params.T * secdiv_id);
+    uint8_t *perms_ptr = (uint8_t *)(range_table) + (64 * params.S) + (64 * params.T * secdiv_id);
 
     for (unsigned int i = 0; i < cell_count; i++) {
         /* Check if vaddr is already in the currently observed range */
@@ -280,28 +278,28 @@ BOOT_CODE void map_kernel_frame(paddr_t paddr, pptr_t vaddr, vm_rights_t vm_righ
 #ifdef CONFIG_RISCV_SECCELL
 BOOT_CODE void map_kernel_range(paddr_t paddr, pptr_t vaddr, size_t size)
 {
-    unsigned int cell_count = rt_cell_count(kernel_root_rangeTable);
-    rt_parameters_t params;
-    uint8_t *perms;
+    /* Resize range table if required */
+    rt_resize_inc(RT_META_PTR(kernel_root_rangeTable));
+
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(kernel_root_rangeTable));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(kernel_root_rangeTable)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(kernel_root_rangeTable))
+    };
+    uint8_t *perms = ((uint8_t *)kernel_root_rangeTable) + (params.S * 64);
     /* TODO: get rid of hardcoded 21 => currently only alignment on 2MiB by rounding */
     paddr = ROUND_DOWN(paddr, 21);
     assert((paddr % BIT(21)) == 0);
-    /* Only 1 SecDiv so far: the kernel itself */
-    rt_resize_inc(kernel_root_rangeTable, cell_count, 1);
 
     cell_count++;
-    params = get_rt_parameters(cell_count);
-    perms = ((uint8_t *)kernel_root_rangeTable) + (params.S * 64);
-
     /* Map the range in the permission / range table */
     kernel_root_rangeTable[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
                                                                (vaddr + size - 1) >> seL4_PageBits,
                                                                paddr >> seL4_PageBits);
     perms[cell_count - 1] = rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
-    /* Mark end of cell list in the permission table */
-    kernel_root_rangeTable[cell_count].words[0] = -1ull;
-    kernel_root_rangeTable[cell_count].words[1] = -1ull;
+    /* Update cell number in metacell */
+    rtmeta_ptr_set_N(RT_META_PTR(kernel_root_rangeTable), cell_count);
 }
 #endif /* CONFIG_RISCV_SECCELL */
 
@@ -309,37 +307,40 @@ BOOT_CODE VISIBLE void map_kernel_window(void)
 {
 #ifdef CONFIG_RISCV_SECCELL
     /* Two cells for now: one for the kernel ELF image, one for the remaining physical memory */
-    unsigned int cell_count = 2;
-    rt_parameters_t params = get_rt_parameters(cell_count);
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(kernel_root_rangeTable));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(kernel_root_rangeTable)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(kernel_root_rangeTable))
+    };
     uint8_t *perms = ((uint8_t *)kernel_root_rangeTable) + (params.S * 64);
 
+    cell_count += 2;
     /* Recall:                                                   */
     /* KERNEL_ELF_BASE = first kernel ELF virtual address        */
     /* KDEV_BASE = first device virtual address                  */
     /* KERNEL_ELF_PADDR_BASE = first kernel ELF physical address */
-    kernel_root_rangeTable[0] = rtcell_new_helper(KERNEL_ELF_BASE >> seL4_PageBits,
-                                                  (KDEV_BASE - 1) >> seL4_PageBits,
-                                                  KERNEL_ELF_PADDR_BASE >> seL4_PageBits);
-    perms[0] = rtperm_to_uint8(rtperm_new(1, /* dirty    */
-                                          1, /* accessed */
-                                          0, /* global   */
-                                          1, /* exec     */
-                                          1, /* write    */
-                                          1, /* read     */
-                                          1  /* valid    */));
+    kernel_root_rangeTable[cell_count - 2] = rtcell_new_helper(KERNEL_ELF_BASE >> seL4_PageBits,
+                                                               (KDEV_BASE - 1) >> seL4_PageBits,
+                                                               KERNEL_ELF_PADDR_BASE >> seL4_PageBits);
+    perms[cell_count - 2] = rtperm_to_uint8(rtperm_new(1, /* dirty    */
+                                                       1, /* accessed */
+                                                       0, /* global   */
+                                                       1, /* exec     */
+                                                       1, /* write    */
+                                                       1, /* read     */
+                                                       1  /* valid    */));
 
     /* Recall:                                                               */
     /* PPTR_BASE = first virtual address of kernels physical memory window   */
     /* PPTR_TOP = first virtual address after kernels physical memory window */
     /* PADDR_BASE = first physical address of kernels physical memory window */
-    kernel_root_rangeTable[1] = rtcell_new_helper(PPTR_BASE >> seL4_PageBits,
-                                                  (PPTR_TOP - 1) >> seL4_PageBits,
-                                                  PADDR_BASE >> seL4_PageBits);
-    perms[1] = rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
+    kernel_root_rangeTable[cell_count - 1] = rtcell_new_helper(PPTR_BASE >> seL4_PageBits,
+                                                               (PPTR_TOP - 1) >> seL4_PageBits,
+                                                               PADDR_BASE >> seL4_PageBits);
+    perms[cell_count - 1] = rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
-    /* Mark end of cell list in the permission table */
-    kernel_root_rangeTable[2].words[0] = -1ull;
-    kernel_root_rangeTable[2].words[1] = -1ull;
+    /* Update cell number in metacell */
+    rtmeta_ptr_set_N(RT_META_PTR(kernel_root_rangeTable), cell_count);
 
     /* Map kernel devices into their region: KDEV_BASE to 2^64 - 1 */
     map_kernel_devices();
@@ -439,27 +440,31 @@ BOOT_CODE void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap)
     pptr_t frame_pptr = pptr_of_cap(frame_cap);
     vptr_t frame_vptr = cap_frame_cap_get_capFMappedAddress(frame_cap);
 
-    unsigned cell_count = rt_cell_count(rt);
     /* Resize range table if required */
-    rt_resize_inc(rt, cell_count, IT_ASID + 1);
+    rt_resize_inc(RT_META_PTR(rt));
+
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(rt)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(rt))
+    };
+
     /* Add cell */
     cell_count++;
     rt[cell_count - 1] = rtcell_new_helper(frame_vptr >> seL4_PageBits,
                                            frame_vptr >> seL4_PageBits,
                                            pptr_to_paddr((void *)frame_pptr) >> seL4_PageBits);
-    /* Add invalid cell to mark the end of the cell list in the range table */
-    rt[cell_count].words[0] = -1ull;
-    rt[cell_count].words[1] = -1ull;
 
-    rt_parameters_t params = get_rt_parameters(cell_count);
-
-    uint8_t *kern_perms = (uint8_t *)(rt) + (params.S * 64);
-    uint8_t *secdiv_perms = kern_perms + (params.T * IT_ASID);
+    uint8_t *kern_perms = (uint8_t *)(rt) + (64 * params.S);
+    uint8_t *secdiv_perms = kern_perms + (64 * params.T * IT_ASID);
     /* Both kernel (supervisor) and user ASID get same permissions since
        mstatus.SUM = 0 in the standard port
        User ASID is also SecDiv ID here for the root thread */
     kern_perms[cell_count - 1] = secdiv_perms[cell_count - 1] =
         rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
+
+    /* Update cell number in metacell */
+    rtmeta_ptr_set_N(RT_META_PTR(rt), cell_count);
 #else
     pte_t *lvl1pt   = PTE_PTR(pptr_of_cap(vspace_cap));
     pte_t *frame_pptr   = PTE_PTR(pptr_of_cap(frame_cap));
@@ -494,9 +499,15 @@ void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
     vptr_t frame_vptr = cap_range_cap_get_capRMappedAddress(range_cap);
     word_t size = cap_range_cap_get_capRSize(range_cap) << seL4_MinRangeBits;
 
-    unsigned int cell_count = rt_cell_count(rt);
     /* Resize range table if required */
-    rt_resize_inc(rt, cell_count, IT_ASID + 1);
+    rt_resize_inc(RT_META_PTR(rt));
+
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(rt)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(rt))
+    };
+
     cell_count++;
     /* Add cell */
     rt[cell_count - 1] = rtcell_new_helper(frame_vptr >> seL4_PageBits,
@@ -504,17 +515,15 @@ void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
                                            pptr_to_paddr((void *)frame_pptr) >> seL4_PageBits);
 
     /* Add permissions for newly created cell */
-    rt_parameters_t params = get_rt_parameters(cell_count);
-    uint8_t *kern_perms = (uint8_t *)(rt) + (params.S * 64);
-    uint8_t *secdiv_perms = kern_perms + (params.T * IT_ASID);
+    uint8_t *kern_perms = (uint8_t *)(rt) + (64 * params.S);
+    uint8_t *secdiv_perms = kern_perms + (64 * params.T * IT_ASID);
     /* Both kernel (supervisor) and user ASID get same permissions
        User ASID is also SecDiv ID here for the root thread */
     kern_perms[cell_count - 1] = secdiv_perms[cell_count - 1] =
         rtperm_to_uint8(rtperm_new(1, 1, 0, 1, 1, 1, 1));
 
-    /* Add invalid cell to mark the end of the cell list in the range table */
-    rt[cell_count].words[0] = -1ull;
-    rt[cell_count].words[1] = -1ull;
+    /* Update cell number in metacell */
+    rtmeta_ptr_set_N(RT_META_PTR(rt), cell_count);
 }
 #endif /* CONFIG_RISCV_SECCELL */
 
@@ -575,10 +584,15 @@ BOOT_CODE cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_re
 
     copyGlobalMappings(RT_PTR(rootserver.vspace));
 
-    /* Ensure that IT_ASID has no access to previously mapped kernel cells */
-    unsigned int cell_count = rt_cell_count(RT_PTR(rootserver.vspace));
-    rt_parameters_t params = get_rt_parameters(cell_count);
-    uint8_t *it_perms = (uint8_t *)(rootserver.vspace + (params.S * 64) + (params.T * IT_ASID));
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rootserver.vspace));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(rootserver.vspace)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(rootserver.vspace))
+    };
+
+    /* Create and set IT permissions (no access to previous kernel mappings) */
+    rtmeta_ptr_set_M(RT_META_PTR(rootserver.vspace), 2);
+    uint8_t *it_perms = (uint8_t *)(rootserver.vspace + (64 * params.S) + (64 * params.T * IT_ASID));
     memset(it_perms, 0, cell_count);
 
     write_slot(SLOT_PTR(pptr_of_cap(root_cnode_cap), seL4_CapInitThreadVSpace), rt_cap);
@@ -679,9 +693,7 @@ static findVSpaceForASID_ret_t findVSpaceForASID(asid_t asid)
 void copyGlobalMappings(rtcell_t *newRt)
 {
     /* TODO: calculate amount of memory to copy based on range table parameters
-     * For now, assume it fits into one page
-     * unsigned int cell_count = rt_cell_count(kernel_root_rangeTable);
-     * rt_parameters_t params = get_rt_parameters(cell_count); */
+     * For now, assume it fits into one page */
     memcpy(newRt, kernel_root_rangeTable, BIT(seL4_PageBits));
 }
 #else
@@ -771,10 +783,10 @@ lookupRTCell_ret_t lookupRTCell(rtcell_t *rt, vptr_t vptr)
     /* Bring vptr into correct format for comparisons */
     vptr = (vptr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
 
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+
     /* Iterate over all the ranges */
-    for (unsigned int i = 0;
-         rt[i].words[0] != -1ull || rt[i].words[1] != -1ull;
-         i++) {
+    for (unsigned int i = 1; i < cell_count; i++) {
         if (vptr >= rtcell_get_vpn_start(rt[i]) &&
             vptr <= rtcell_get_vpn_end_helper(rt[i])) {
             /* Found a range that contains the virtual address */
@@ -972,6 +984,7 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
     if (find_ret.status != EXCEPTION_NONE) {
         return;
     }
+    rtcell_t *rt = RT_PTR(find_ret.vspace_root);
 
     /* Bring pointers into the correct format for following comparisons */
     vptr_start = (vptr_start >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
@@ -979,14 +992,16 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
     paddr_t paddr = addrFromPPtr((void *)pptr) >> seL4_PageBits;
 
     secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
-    word_t n_secdivs = getNSecDivs(NODE_STATE(ksCurThread));
+    word_t n_secdivs = rtmeta_ptr_get_M(RT_META_PTR(rt));
 
-    rtcell_t *rt = RT_PTR(find_ret.vspace_root);
-    unsigned int cell_count = rt_cell_count(rt);
-    rt_parameters_t params = get_rt_parameters(cell_count);
-    uint8_t *perms = (uint8_t *)(rt) + (params.S * 64);
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(rt)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(rt))
+    };
+    uint8_t *perms = (uint8_t *)(rt) + (64 * params.S);
 
-    for (unsigned int i = 0; i < cell_count; i++) {
+    for (unsigned int i = 1; i < cell_count; i++) {
         rtcell_t cell = rt[i];
 
         if (vptr_start == rtcell_get_vpn_start(cell) &&
@@ -1002,7 +1017,7 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
                 one that requested the unmapping or the kernel */
                 for (secdivid_t curr_secdiv = 1; curr_secdiv < n_secdivs; curr_secdiv++) {
                     if (curr_secdiv != secdiv_id) {
-                        uint8_t *curr_perms_ptr = perms + (params.T * curr_secdiv);
+                        uint8_t *curr_perms_ptr = perms + (64 * params.T * curr_secdiv);
                         rtperm_t curr_perms = rtperm_from_uint8(curr_perms_ptr[i]);
 
                         if (rtperm_get_valid(curr_perms) &&
@@ -1011,7 +1026,7 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
                              rtperm_get_exec(curr_perms))) {
                             /* Cell is valid and actually accessible by another SecDiv
                                => can't unmap, invalidate instead */
-                            uint8_t *secdiv_perms_ptr = perms + (params.T * secdiv_id);
+                            uint8_t *secdiv_perms_ptr = perms + (64 * params.T * secdiv_id);
                             rtperm_t cell_perms = rtperm_from_uint8(secdiv_perms_ptr[i]);
                             cell_perms = rtperm_set_valid(cell_perms, 0);
                             secdiv_perms_ptr[i] = rtperm_to_uint8(cell_perms);
@@ -1034,7 +1049,7 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
     }
 }
 
-void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr)
+UNUSED void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr)
 {
     /* TODO: rework and check functionality - this is basically just a wrapper
        for legacy code currently! */
@@ -1050,11 +1065,14 @@ void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr)
     secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
 
     rtcell_t *rt = RT_PTR(find_ret.vspace_root);
-    unsigned int cell_count = rt_cell_count(rt);
-    rt_parameters_t params = get_rt_parameters(cell_count);
-    uint8_t *perms = (uint8_t *)(rt) + (params.S * 64) + (params.T * secdiv_id);
+    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(rt)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(rt))
+    };
+    uint8_t *perms = (uint8_t *)(rt) + (64 * params.S) + (64 * params.T * secdiv_id);
 
-    for (unsigned int i = 0; i < cell_count; i++) {
+    for (unsigned int i = 1; i < cell_count; i++) {
         rtcell_t cell = rt[i];
 
         if (vptr == rtcell_get_vpn_start(cell) &&
@@ -1101,7 +1119,7 @@ void setVMRoot(tcb_t *tcb)
     else if (cap_get_capType(threadRoot) == cap_range_table_cap) {
         rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(threadRoot));
 
-        asid = getRegister(tcb, ReturnUID);
+        asid = cap_range_table_cap_get_capRTMappedASID(threadRoot);
 
         setVSpaceRoot(addrFromPPtr(rt), asid);
     }
@@ -1512,27 +1530,29 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
 
             paddr_t paddr = addrFromPPtr((void *) cap_range_table_cap_get_capRTBasePtr(cap));
 
-            unsigned int cell_count = rt_cell_count(rt);
+            unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
             /* Resize range table if required */
-            rt_resize_inc(rt, cell_count, getNSecDivs(NODE_STATE(ksCurThread)));
+            rt_resize_inc(RT_META_PTR(rt));
+
+            rt_parameters_t params = {
+                .S = rtmeta_ptr_get_T(RT_META_PTR(rt)) * 16,
+                .T = rtmeta_ptr_get_T(RT_META_PTR(rt))
+            };
 
             cell_count++;
-            rt_parameters_t params = get_rt_parameters(cell_count);
-
             /* Add new cell */
             rt[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
                                                    (vaddr_top - 1) >> seL4_PageBits,
                                                    paddr >> seL4_PageBits);
             /* Add permissions for new cell */
-            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64);
-            uint8_t *perms_secdiv = perms_sup + (params.T * secdiv_id);
+            uint8_t *perms_sup = (uint8_t *)(rt) + (64 * params.S);
+            uint8_t *perms_secdiv = perms_sup + (64 * params.T * secdiv_id);
             /* Set permissions: non-executable, readable, writable */
             perms_sup[cell_count - 1] = perms_secdiv[cell_count - 1] =
                 rtperm_to_uint8(rtperm_new(1, 1, 0, 0, 1, 1, 1));
 
-            /* Add invalid cell to mark end */
-            rt[cell_count].words[0] = -1ull;
-            rt[cell_count].words[1] = -1ull;
+            /* Update cell number in metacell */
+            rtmeta_ptr_set_N(RT_META_PTR(rt), cell_count);
 
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;
@@ -1664,27 +1684,30 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             /* TODO: Atri's prototype increments the addr by 4kiB - why? */
             paddr_t range_paddr = addrFromPPtr((void*) cap_range_cap_get_capRBasePtr(cap));
 
-            unsigned int cell_count = rt_cell_count(rt);
-            rt_resize_inc(rt, cell_count, getNSecDivs(NODE_STATE(ksCurThread)));
+            unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+            rt_resize_inc(RT_META_PTR(rt));
 
+            rt_parameters_t params = {
+                .S = rtmeta_ptr_get_T(RT_META_PTR(rt)) * 16,
+                .T = rtmeta_ptr_get_T(RT_META_PTR(rt))
+            };
             cell_count++;
-            rt_parameters_t params = get_rt_parameters(cell_count);
             /* Add new cell */
             rt[cell_count - 1] = rtcell_new_helper(vaddr >> seL4_PageBits,
                                                    (vaddr + size - 1) >> seL4_PageBits,
                                                    range_paddr >> seL4_PageBits);
-            /* Add invalid cell to mark end */
-            rt[cell_count].words[0] = -1ull;
-            rt[cell_count].words[1] = -1ull;
 
-            uint8_t *perms_sup = (uint8_t *)(rt) + (params.S * 64);
-            uint8_t *perms_secdiv = perms_sup + (params.T * secdiv_id);
+            uint8_t *perms_sup = (uint8_t *)(rt) + (64 * params.S);
+            uint8_t *perms_secdiv = perms_sup + (64 * params.T * secdiv_id);
             word_t read = RISCVGetReadFromVMRights(vm_rights);
             word_t write = RISCVGetWriteFromVMRights(vm_rights);
             bool_t exec = !vm_attributes_get_riscvExecuteNever(attr);
             /* Set permissions */
             perms_sup[cell_count - 1] = perms_secdiv[cell_count - 1] =
                 rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
+
+            /* Update cell number in metacell */
+            rtmeta_ptr_set_N(RT_META_PTR(rt), cell_count);
 
             /* Update capability */
             cap = cap_range_cap_set_capRMappedASID(cap, asid);
@@ -2001,9 +2024,11 @@ void Arch_userStackTrace(tcb_t *tptr)
     secdivid_t secdiv_id = getRegister(tptr, ReturnUID);
     rtcell_t *vspace_root = RT_PTR(pptr_of_cap(threadRoot));
 
-    unsigned int cell_count = rt_cell_count(vspace_root);
-    rt_parameters_t params = get_rt_parameters(cell_count);
-    uint8_t *secdiv_perms = (uint8_t *)(vspace_root) + (params.S * 64) + (params.T * secdiv_id);
+    rt_parameters_t params = {
+        .S = rtmeta_ptr_get_T(RT_META_PTR(vspace_root)) * 16,
+        .T = rtmeta_ptr_get_T(RT_META_PTR(vspace_root))
+    };
+    uint8_t *secdiv_perms = (uint8_t *)(vspace_root) + (64 * params.S) + (64 * params.T * secdiv_id);
 
     for (int i = 0; i < CONFIG_USER_STACK_TRACE_LENGTH; i++) {
         word_t address = sp + (i * sizeof(word_t));

@@ -179,6 +179,16 @@ BOOT_CODE static void init_plat(void)
     initIRQController();
 }
 
+#ifdef CONFIG_RISCV_SECCELL
+BOOT_CODE static void init_range_table(void)
+{
+    rtmeta_t metacell = rtmeta_new(1, /* N (only metacell)               */
+                                   1, /* M (only kernel SecDiv)          */
+                                   1  /* T (only one cache line for now) */
+                                  );
+    *RT_META_PTR(kernel_root_rangeTable) = metacell;
+}
+#endif /* CONFIG_RISCV_SECCELL */
 
 #ifdef ENABLE_SMP_SUPPORT
 BOOT_CODE static bool_t try_init_kernel_secondary_core(word_t hart_id, word_t core_id)
@@ -267,6 +277,10 @@ static BOOT_CODE bool_t try_init_kernel(
     /* The region of the initial thread is the user image + ipcbuf + boot info + extra */
     it_v_reg.start = ui_v_reg.start;
     it_v_reg.end = extra_bi_frame_vptr + BIT(extra_bi_size_bits);
+
+#ifdef CONFIG_RISCV_SECCELL
+    init_range_table();
+#endif /* CONFIG_RISCV_SECCELL */
 
     map_kernel_window();
 

@@ -182,6 +182,13 @@ block rtcell {
     field vpn_start        36
 }
 
+block rtmeta {
+    field N                32
+    field M                32
+    field T                32
+    padding                32
+}
+
 block rtperm {
     padding 56
     field dirty            1

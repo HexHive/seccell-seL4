@@ -68,6 +68,7 @@ typedef pte_t pde_t;
 #define RT_PPN_BITS     seL4_SecCellsPPNBits
 #define RT_VPN_BITS     seL4_SecCellsVPNBits
 #define RT_PTR(r)       ((rtcell_t *)(r))
+#define RT_META_PTR(r)  ((rtmeta_t *)(r))
 
 #define VR_PTR(r)       ((vspace_root_t *)(r))
 
