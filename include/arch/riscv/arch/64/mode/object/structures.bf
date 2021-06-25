@@ -175,7 +175,9 @@ block satp {
 -- vpn_end and vpn_end_top together result in the actual VPN address, they have
 -- to be split up to comply with 64 bit word boundaries
 block rtcell {
-    padding                12
+    field deleted          1
+    field valid            1
+    padding                10
     field ppn              44
     field vpn_end_top      8
     field vpn_end          28

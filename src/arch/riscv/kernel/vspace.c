@@ -103,7 +103,8 @@ static rtcell_t rtcell_new_helper(uint64_t vpn_start, uint64_t vpn_end, uint64_t
      * block size (blocks built of uint64_t words)
      */
     size_t split = (sizeof(uint64_t) * 8) - RT_VPN_BITS;
-    return rtcell_new(ppn, vpn_end >> split, vpn_end & ((1ull << split) - 1), vpn_start);
+    /* New cells are not marked as deleted but marked as valid by default */
+    return rtcell_new(0, 1, ppn, vpn_end >> split, vpn_end & ((1ull << split) - 1), vpn_start);
 }
 
 static word_t rtcell_get_vpn_end_helper(rtcell_t cell)
