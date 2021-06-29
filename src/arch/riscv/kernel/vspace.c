@@ -176,9 +176,14 @@ static void rt_delete_cell(rtcell_t *range_table, unsigned int index)
 {
     /* Mark cell as deleted */
     rtcell_ptr_set_deleted(range_table + index, 1);
-    /* Actually remove cells marked as deleted */
-    /* TODO: don't compact everytime => still have to define compaction frequency */
-    rt_compact_table(range_table);
+
+    /* Blank permissions to the cell */
+    rt_parameters_t params = get_rt_parameters(range_table);
+    uint8_t *perms = (uint8_t *)(range_table) + (64 * params.S);
+    for (secdivid_t i = 0; i < params.M; i++) {
+        uint8_t *secdiv_perms = perms + (64 * params.T * i);
+        secdiv_perms[index] = 0;
+    }
 }
 
 static void rt_compact_table(rtcell_t *range_table)
@@ -248,7 +253,8 @@ static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, secdivid_t s
 
     for (unsigned int i = 0; i < params.N; i++) {
         /* Check if vaddr is already in the currently observed range */
-        if (vaddr >= rtcell_get_vpn_start(range_table[i]) &&
+        if (!rtcell_get_deleted(range_table[i]) &&
+            vaddr >= rtcell_get_vpn_start(range_table[i]) &&
             vaddr <= rtcell_get_vpn_end_helper(range_table[i])) {
 
             /* Get the permissions for the currently checked cell */
@@ -1570,6 +1576,14 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             slot_cap = cap_range_table_cap_set_capRTIsMapped(slot_cap, false);
             cte->cap = slot_cap;
 
+            return EXCEPTION_NONE;
+        }
+
+        case RISCVRangeTableCompact: {
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+            rt_compact_table(rt);
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;
         }
 
