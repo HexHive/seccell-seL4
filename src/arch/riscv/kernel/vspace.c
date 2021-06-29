@@ -152,6 +152,14 @@ static void rt_resize_inc(rtcell_t *rt)
 
     /* Only resize if it is even necessary */
     if (old_params.T != new_params.T) {
+        /* Assert no overlapping between old and new permissions => code works anyways, but in the case of overlapping,
+           the resizing is not atomic (i.e., there are two exact same copies of the permissions and resizing happens by
+           only updating T => during and after resizing, permissions are valid from both kernel's and hardware's POV) */
+        /* TODO: increase T by so much that we prevent overlapping altogether, i.e, new cell location covers also whole
+           old permission location? */
+        assert((uint8_t *)(rt) + (64 * new_params.S) >=
+            (uint8_t *)(rt) + (64 * old_params.S) + (64 * old_params.T * old_params.M));
+
         for (unsigned int i = 0; i < old_params.M; i++) {
             /* Start from the end to not overwrite other data */
             unsigned int secdiv_id = old_params.M - i - 1;
@@ -164,11 +172,11 @@ static void rt_resize_inc(rtcell_t *rt)
                Also, use old cell count since adding cells and perms happens only after resizing */
             memcpy(new_perms, old_perms, old_params.N);
         }
-        /* Clear (now unused) region used by old permissions */
-        memset(((uint8_t *)rt) + (64 * old_params.S), 0, 64 * (new_params.S - old_params.S));
-
         /* Update metacell value for T */
         rtmeta_ptr_set_T(RT_META_PTR(rt), new_params.T);
+
+        /* Clear (now unused) region used by old permissions */
+        memset(((uint8_t *)rt) + (64 * old_params.S), 0, 64 * (new_params.S - old_params.S));
     }
 }
 
@@ -186,6 +194,8 @@ static void rt_delete_cell(rtcell_t *range_table, unsigned int index)
     }
 }
 
+/* Note: Range table compaction cannot be done atomically, i.e., so that all cells and permissions are valid and kernel
+   and hardware switch over at the same time through updating a single value => c.f. assertion in rt_resize_inc */
 static void rt_compact_table(rtcell_t *range_table)
 {
     rt_parameters_t params = get_rt_parameters(range_table);
