@@ -173,6 +173,33 @@
                 the permissions around.
             </description>
         </method>
+        <method id="RISCVRangeTableAddSecDiv" name="AddSecDiv" manual_label="rangetable_addsecdiv">
+            <brief>
+                Add a Security Division to the range table.
+            </brief>
+            <description>
+                Make sure there is enough space to add another Security Division and increase the corresponding value in
+                the meta cell in case of success.
+            </description>
+             <return>
+                 A <texttt text='seL4_RISCV_RangeTable_AddSecDiv_t'/> struct that contains a
+                <texttt text='seL4_Word id'/>, which holds the Security Division's ID,
+                and <texttt text='int error'/>. <docref>See <autoref label='sec:errors'/> for a description
+                of the message register and tag contents upon error.</docref>
+            </return>
+            <param dir="out" name="id" type="seL4_Word"/>
+        </method>
+        <method id="RISCVRangeTableRemoveSecDiv" name="RemoveSecDiv" manual_label="rangetable_removesecdiv">
+            <brief>
+                Remove a Security Division from the range table.
+            </brief>
+            <description>
+                Remove a Security Division from the range table by blanking all of its permissions.
+            </description>
+            <param dir="in" name="id" type="seL4_Word">
+                <description>ID of the SecDiv to remove.</description>
+            </param>
+        </method>
     </interface>
     <interface name="seL4_RISCV_Range" manual_name="Range" cap_description="Capability to the range / secure cell to invoke.">
         <method id="RISCVRangeMap" name="Map">

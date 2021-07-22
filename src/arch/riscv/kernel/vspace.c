@@ -1597,6 +1597,42 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             return EXCEPTION_NONE;
         }
 
+        case RISCVRangeTableAddSecDiv: {
+            /* TODO: Should we reuse empty/previously deleted SecDivs? */
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+            rt_parameters_t params = get_rt_parameters(rt);
+            rtmeta_ptr_set_M(RT_META_PTR(rt), params.M + 1);
+            sfence();
+
+            /* Return SecDiv ID in the first message register */
+            setRegister(NODE_STATE(ksCurThread), msgRegisters[0], params.M);
+            setRegister(NODE_STATE(ksCurThread), msgInfoRegister,
+                        wordFromMessageInfo(seL4_MessageInfo_new(0, 0, 0, 1)));
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return EXCEPTION_NONE;
+        }
+
+        case RISCVRangeTableRemoveSecDiv: {
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+            rt_parameters_t params = get_rt_parameters(rt);
+
+            secdivid_t secdiv = getSyscallArg(0, buffer);
+            if (secdiv > (params.M - 1)) {
+                /* SecDiv ID invalid / too high */
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            /* Blank the SecDiv's permissions */
+            uint8_t *secdiv_perms = (uint8_t *)rt + (64 * params.S) + (64 * params.T * secdiv);
+            memset((void *)secdiv_perms, 0, params.N);
+
+            sfence();
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return EXCEPTION_NONE;
+        }
+
         default: {
             userError("RISCVRangeTable: Illegal operation.");
             current_syscall_error.type = seL4_IllegalOperation;
