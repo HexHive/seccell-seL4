@@ -1053,43 +1053,6 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
         }
     }
 }
-
-UNUSED void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr)
-{
-    /* TODO: rework and check functionality - this is basically just a wrapper
-       for legacy code currently! */
-    findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
-    if (find_ret.status != EXCEPTION_NONE) {
-        return;
-    }
-
-    /* Bring pointers into the correct format for following comparisons */
-    vptr = (vptr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
-    paddr_t paddr = addrFromPPtr((void *)pptr) >> seL4_PageBits;
-
-    secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
-
-    rtcell_t *rt = RT_PTR(find_ret.vspace_root);
-    rt_parameters_t params = get_rt_parameters(rt);
-    uint8_t *perms = (uint8_t *)(rt) + (64 * params.S) + (64 * params.T * secdiv_id);
-
-    for (unsigned int i = 1; i < params.N; i++) {
-        rtcell_t cell = rt[i];
-
-        if (vptr == rtcell_get_vpn_start(cell) &&
-            paddr == rtcell_get_ppn(cell)) {
-            rtperm_t cell_perms = rtperm_from_uint8(perms[i]);
-            cell_perms = rtperm_set_valid(cell_perms, 0);
-            perms[i] = rtperm_to_uint8(cell_perms);
-            /* A single SecDiv can only have a virtual address in its address space
-               once but there may be several overlapping ranges containing the address
-               in the permission table => set all of them to invalid (even though at
-               most one of them should be valid) and thus continue iterating */
-        }
-    }
-    /* Make sure all the invalidations are propagated to memory before continuing */
-    sfence();
-}
 #endif /* CONFIG_RISCV_SECCELL */
 
 void setVMRoot(tcb_t *tcb)
