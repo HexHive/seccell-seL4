@@ -511,7 +511,7 @@ BOOT_CODE void map_it_frame_cap(cap_t vspace_cap, cap_t frame_cap)
 }
 
 #ifdef CONFIG_RISCV_SECCELL
-void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
+BOOT_CODE void map_it_range_cap(cap_t vspace_cap, cap_t range_cap) {
     rtcell_t *rt = RT_PTR(pptr_of_cap(vspace_cap));
     pptr_t frame_pptr = pptr_of_cap(range_cap);
     vptr_t frame_vptr = cap_range_cap_get_capRMappedAddress(range_cap);
