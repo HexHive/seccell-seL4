@@ -295,34 +295,39 @@ static void rt_compact_table(rtcell_t *range_table)
     }
 }
 
-static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr, secdivid_t secdiv_id)
+static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr)
 {
-    /* TODO: seems a little bit too hacky for now... */
     rt_parameters_t params = get_rt_parameters(range_table);
+    size_t start_idx, end_idx;
+
+    start_idx = 1;
+    end_idx = params.N;
+
     /* Bring vaddr into correct format for comparisons */
-    vaddr = (vaddr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+    vaddr = (vaddr >> seL4_MinRangeBits) & MASK(seL4_SecCellsVPNBits);
 
-    /* Get permissions for the requested SecDiv */
-    uint8_t *perms_ptr = (uint8_t *)(range_table) + (64 * params.S) + (64 * params.T * secdiv_id);
+    /* Binary search for given vaddr */
+    while (start_idx < end_idx) {
+        /* Due to rounding towards zero, start_idx <= middle_idx < end_idx
+           The below assignments thus guarantee progress and eventually loop termination */
+        size_t middle_idx = start_idx + ((end_idx - start_idx) / 2);
 
-    for (unsigned int i = 0; i < params.N; i++) {
-        /* Check if vaddr is already in the currently observed range */
-        if (!rtcell_get_deleted(range_table[i]) &&
-            vaddr >= rtcell_get_vpn_start(range_table[i]) &&
-            vaddr <= rtcell_get_vpn_end_helper(range_table[i])) {
-
-            /* Get the permissions for the currently checked cell */
-            rtperm_t perms = rtperm_from_uint8(perms_ptr[i]);
-
-            /* Check if the currently checked cell is actually mapped into the current address space */
-            if (rtperm_get_valid(perms)) {
-                /* It is! */
-                return true;
-            }
+        if (vaddr > rtcell_get_vpn_end_helper(range_table[middle_idx])) {
+            /* End address is lower => want to continue search after current cell */
+            start_idx = middle_idx + 1;
+        } else if (vaddr < rtcell_get_vpn_start(range_table[middle_idx])) {
+            /* Start address is higher => want to continue search before current cell */
+            end_idx = middle_idx;
+        } else if (!rtcell_get_deleted(range_table[middle_idx])) {
+            /* Vaddr in current range and cell is not marked as deleted => already mapped! */
+            return true;
+        } else {
+            /* Vaddr in current range and cell is marked as deleted */
+            break;
         }
     }
-    /* The vaddr was either not mapped into any cell so far or if it was, */
-    /* such a cell isn't valid in the address space under consideration   */
+    /* Vaddr was either not mapped into the address space in any cell so far or if it was,
+       the cell was marked as deleted */
     return false;
 }
 #endif /* CONFIG_RISCV_SECCELL */
@@ -1724,8 +1729,8 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                     return EXCEPTION_SYSCALL_ERROR;
                 }
             } else {
-                /* Make sure that this vaddr isn't already mapped for the SecDiv in question */
-                if (unlikely(rtcell_is_mapped(rt, vaddr, secdiv_id))) {
+                /* Make sure that this vaddr isn't already mapped */
+                if (unlikely(rtcell_is_mapped(rt, vaddr))) {
                     userError("RISCVRangeMap: Virtual address already mapped");
                     current_syscall_error.type = seL4_DeleteFirst;
                     return EXCEPTION_SYSCALL_ERROR;
