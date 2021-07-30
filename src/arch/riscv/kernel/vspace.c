@@ -1059,52 +1059,74 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
     rt_parameters_t params = get_rt_parameters(rt);
     uint8_t *perms = (uint8_t *)(rt) + (64 * params.S);
 
-    for (unsigned int i = 1; i < params.N; i++) {
-        rtcell_t cell = rt[i];
+    size_t start_idx, end_idx;
+    start_idx = 1;
+    end_idx = params.N;
 
-        if (vptr_start == rtcell_get_vpn_start(cell) &&
-            vptr_end == rtcell_get_vpn_end_helper(cell) &&
-            paddr == rtcell_get_ppn(cell)) {
-            /* Found cell with the requested characteristics */
+    /* Binary search for given vaddr */
+    while (start_idx < end_idx) {
+        /* Due to rounding towards zero, start_idx <= middle_idx < end_idx
+           The below assignments thus guarantee progress and eventually loop termination */
+        size_t middle_idx = start_idx + ((end_idx - start_idx) / 2);
 
-            /* Brute unmapping means unmapping a range no matter which SecDiv might still
-            have it mapped. Otherwise, unmapping only works if no SecDiv has R/W/X access
-            and the valid bit set. */
-            if (!brute) {
-                /* Check whether the range is still accessible to any SecDiv other than the
-                one that requested the unmapping or the kernel */
-                for (secdivid_t curr_secdiv = 1; curr_secdiv < params.M; curr_secdiv++) {
-                    if (curr_secdiv != secdiv_id) {
-                        uint8_t *curr_perms_ptr = perms + (64 * params.T * curr_secdiv);
-                        rtperm_t curr_perms = rtperm_from_uint8(curr_perms_ptr[i]);
-
-                        if (rtperm_get_valid(curr_perms) &&
-                            (rtperm_get_read(curr_perms) ||
-                             rtperm_get_write(curr_perms) ||
-                             rtperm_get_exec(curr_perms))) {
-                            /* Cell is valid and actually accessible by another SecDiv
-                               => can't unmap, invalidate instead */
-                            uint8_t *secdiv_perms_ptr = perms + (64 * params.T * secdiv_id);
-                            rtperm_t cell_perms = rtperm_from_uint8(secdiv_perms_ptr[i]);
-                            cell_perms = rtperm_set_valid(cell_perms, 0);
-                            secdiv_perms_ptr[i] = rtperm_to_uint8(cell_perms);
-
-                            /* Make sure the invalidation is propagated to memory */
-                            sfence();
-                            return;
-                        }
-                    }
-                }
-            }
-            /* We arrive here if either brute unmapping was chosen or the range is not mapped into
-               any other SecDiv => unmap the range, i.e., remove it from the range table */
-            rt_delete_cell(rt, i);
-            /* Make sure the unmapping is propagated to memory */
-            sfence();
-            /* There can only be one range with those exact parameters (virtual and physical addresses), so stop iterating when we found it */
-            return;
+        if (vptr_start > rtcell_get_vpn_end_helper(rt[middle_idx])) {
+            /* End address is lower => want to continue search after current cell */
+            start_idx = middle_idx + 1;
+        } else if (vptr_start < rtcell_get_vpn_start(rt[middle_idx])) {
+            /* Start address is higher => want to continue search before current cell */
+            end_idx = middle_idx;
+        } else {
+            /* Found the cell => end search */
+            start_idx = middle_idx;
+            break;
         }
     }
+
+    rtcell_t cell = rt[start_idx];
+    if (unlikely(!(vptr_start == rtcell_get_vpn_start(cell)
+                   && vptr_end == rtcell_get_vpn_end_helper(cell)
+                   && paddr == rtcell_get_ppn(cell)))) {
+        /* There is an inconsistency between the range table contents and the capabilities - this
+           should never happen! */
+        return;
+    }
+
+    /* Brute unmapping means unmapping a range no matter which SecDiv might still
+        have it mapped. Otherwise, unmapping only works if no SecDiv has R/W/X access
+        and the valid bit set. */
+    if (!brute) {
+        /* Check whether the range is still accessible to any SecDiv other than the
+        one that requested the unmapping or the kernel */
+        for (secdivid_t curr_secdiv = 1; curr_secdiv < params.M; curr_secdiv++) {
+            if (curr_secdiv != secdiv_id) {
+                uint8_t *curr_perms_ptr = perms + (64 * params.T * curr_secdiv);
+                rtperm_t curr_perms = rtperm_from_uint8(curr_perms_ptr[start_idx]);
+
+                if (rtperm_get_valid(curr_perms)
+                    && (rtperm_get_read(curr_perms)
+                        || rtperm_get_write(curr_perms)
+                        || rtperm_get_exec(curr_perms))) {
+                    /* Cell is valid and actually accessible by another SecDiv
+                       => shouldn't unmap, invalidate instead */
+                    uint8_t *secdiv_perms_ptr = perms + (64 * params.T * secdiv_id);
+                    rtperm_t cell_perms = rtperm_from_uint8(secdiv_perms_ptr[start_idx]);
+                    cell_perms = rtperm_set_valid(cell_perms, 0);
+                    secdiv_perms_ptr[start_idx] = rtperm_to_uint8(cell_perms);
+
+                    /* Make sure the invalidation is propagated to memory */
+                    sfence();
+                    return;
+                }
+            }
+        }
+    }
+    /* We arrive here if either brute unmapping was chosen or the range is not mapped into
+        any other SecDiv => unmap the range, i.e., remove it from the range table */
+    rt_delete_cell(rt, start_idx);
+    /* Make sure the unmapping is propagated to memory */
+    sfence();
+    /* There can only be one range with those exact parameters (virtual and physical addresses), so stop iterating when we found it */
+    return;
 }
 #endif /* CONFIG_RISCV_SECCELL */
 
