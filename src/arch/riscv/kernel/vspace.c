@@ -1170,14 +1170,13 @@ void setVMRoot(tcb_t *tcb)
 
 bool_t CONST isValidVTableRoot(cap_t cap)
 {
-    /* TODO: Only check for captype based on ifdef..else instead of checking both? */
-    return ((cap_get_capType(cap) == cap_page_table_cap &&
-             cap_page_table_cap_get_capPTIsMapped(cap))
 #ifdef CONFIG_RISCV_SECCELL
-            || (cap_get_capType(cap) == cap_range_table_cap &&
-                cap_range_table_cap_get_capRTIsMapped(cap))
+    return (cap_get_capType(cap) == cap_range_table_cap &&
+            cap_range_table_cap_get_capRTIsMapped(cap));
+#else
+    return (cap_get_capType(cap) == cap_page_table_cap &&
+            cap_page_table_cap_get_capPTIsMapped(cap));
 #endif /* CONFIG_RISCV_SECCELL */
-           );
 }
 
 exception_t checkValidIPCBuffer(vptr_t vptr, cap_t cap)
