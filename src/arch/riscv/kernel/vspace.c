@@ -1635,6 +1635,9 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
         }
 
         case RISCVRangeTableAddSecDiv: {
+            /* Check that there are enough message registers */
+            assert(n_msgRegisters >= 1);
+
             /* TODO: Should we reuse empty/previously deleted SecDivs? */
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
             rt_parameters_t params = get_rt_parameters(rt);
@@ -1769,7 +1772,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             params.N++;
             /* Add new cell */
             rtcell_t cell = rtcell_new_helper(vaddr >> seL4_PageBits,
-                                              (vaddr + size - 1) >> seL4_PageBits,
+                                              vtop >> seL4_PageBits,
                                               range_paddr >> seL4_PageBits);
             word_t index = rt_insert_cell(rt, cell, &params);
 
