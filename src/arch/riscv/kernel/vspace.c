@@ -297,38 +297,16 @@ static void rt_compact_table(rtcell_t *range_table)
 
 static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr)
 {
-    rt_parameters_t params = get_rt_parameters(range_table);
-    size_t start_idx, end_idx;
+    rtIndex_t cell_index = lookupRTCell(range_table, vaddr);
 
-    start_idx = 1;
-    end_idx = params.N;
-
-    /* Bring vaddr into correct format for comparisons */
-    vaddr = (vaddr >> seL4_MinRangeBits) & MASK(seL4_SecCellsVPNBits);
-
-    /* Binary search for given vaddr */
-    while (start_idx < end_idx) {
-        /* Due to rounding towards zero, start_idx <= middle_idx < end_idx
-           The below assignments thus guarantee progress and eventually loop termination */
-        size_t middle_idx = start_idx + ((end_idx - start_idx) / 2);
-
-        if (vaddr > rtcell_get_vpn_end_helper(range_table[middle_idx])) {
-            /* End address is lower => want to continue search after current cell */
-            start_idx = middle_idx + 1;
-        } else if (vaddr < rtcell_get_vpn_start(range_table[middle_idx])) {
-            /* Start address is higher => want to continue search before current cell */
-            end_idx = middle_idx;
-        } else if (!rtcell_get_deleted(range_table[middle_idx])) {
-            /* Vaddr in current range and cell is not marked as deleted => already mapped! */
-            return true;
-        } else {
-            /* Vaddr in current range and cell is marked as deleted */
-            break;
-        }
+    if (cell_index != 0 && !rtcell_get_deleted(range_table[cell_index])) {
+        /* Found cell which isn't marked as deleted => valid mapping exists */
+        return true;
+    } else {
+        /* Vaddr was either not mapped into the address space in any cell so far or if it was,
+           the cell was marked as deleted */
+        return false;
     }
-    /* Vaddr was either not mapped into the address space in any cell so far or if it was,
-       the cell was marked as deleted */
-    return false;
 }
 #endif /* CONFIG_RISCV_SECCELL */
 
@@ -837,37 +815,40 @@ static inline rtcell_t *getPPtrFromHWRTCell(rtcell_t *cell)
     return RT_PTR(ptrFromPAddr(rtcell_ptr_get_ppn(cell) << seL4_PageTableBits));
 }
 
-lookupRTCell_ret_t lookupRTCell(rtcell_t *rt, vptr_t vptr)
+rtIndex_t lookupRTCell(rtcell_t *rt, vptr_t vptr)
 {
-    /* Initialize return value to prevent compiler errors because of uninitialized values
-       => should never actually be returned, we should always find a valid slot! */
-    lookupRTCell_ret_t ret = {0, 0};
+    /* Initialize with 0 as a kind of "error marker" => signifies that no cell containing the given
+       address could be found in the address space */
+    rtIndex_t ret = 0;
 
     /* Bring vptr into correct format for comparisons */
-    vptr = (vptr >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
+    vptr = (vptr >> seL4_MinRangeBits) & MASK(seL4_SecCellsVPNBits);
 
-    unsigned int cell_count = rtmeta_ptr_get_N(RT_META_PTR(rt));
+    rt_parameters_t params = get_rt_parameters(rt);
 
-    /* Iterate over all the ranges */
-    for (unsigned int i = 1; i < cell_count; i++) {
-        if (vptr >= rtcell_get_vpn_start(rt[i]) &&
-            vptr <= rtcell_get_vpn_end_helper(rt[i])) {
-            /* Found a range that contains the virtual address */
-            /* TODO: ranges can overlap - how to handle that case? */
-            ret.rtSlotIndex = i;
+    rtIndex_t start_idx, end_idx;
+    start_idx = 1;
+    end_idx = params.N;
 
-            word_t bits = 0;
-            word_t size = rtcell_get_vpn_end_helper(rt[i]) - rtcell_get_vpn_start(rt[i]);
-            while (size > 1ull << bits) {
-                bits++;
-            }
-            /* Increase bit number by seL4_PageBits because of shifted adresses being used for the calculations above */
-            ret.rSizeBits = bits + seL4_PageBits;
+    /* Binary search for given vaddr */
+    while (start_idx < end_idx) {
+        /* Due to rounding towards zero, start_idx <= middle_idx < end_idx
+           The below assignments thus guarantee progress and eventually loop termination */
+        rtIndex_t middle_idx = start_idx + ((end_idx - start_idx) / 2);
 
-            /* Found range, set the return values => end iterating over cells */
+        if (vptr > rtcell_get_vpn_end_helper(rt[middle_idx])) {
+            /* End address is lower => want to continue search after current cell */
+            start_idx = middle_idx + 1;
+        } else if (vptr < rtcell_get_vpn_start(rt[middle_idx])) {
+            /* Start address is higher => want to continue search before current cell */
+            end_idx = middle_idx;
+        } else {
+            /* Found the cell => end search */
+            ret = middle_idx;
             break;
         }
     }
+
     return ret;
 }
 #endif /* CONFIG_RISCV_SECCELL */
@@ -1049,40 +1030,18 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
     }
     rtcell_t *rt = RT_PTR(find_ret.vspace_root);
 
+    rtIndex_t cell_index = lookupRTCell(rt, vptr_start);
+    if (unlikely(0 == cell_index)) {
+        /* Didn't find the address in the address space => should never happen */
+        return;
+    }
+
     /* Bring pointers into the correct format for following comparisons */
     vptr_start = (vptr_start >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
     vptr_end = (vptr_end >> seL4_PageBits) & MASK(seL4_SecCellsVPNBits);
     paddr_t paddr = addrFromPPtr((void *)pptr) >> seL4_PageBits;
 
-    secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
-
-    rt_parameters_t params = get_rt_parameters(rt);
-    uint8_t *perms = (uint8_t *)(rt) + (64 * params.S);
-
-    size_t start_idx, end_idx;
-    start_idx = 1;
-    end_idx = params.N;
-
-    /* Binary search for given vaddr */
-    while (start_idx < end_idx) {
-        /* Due to rounding towards zero, start_idx <= middle_idx < end_idx
-           The below assignments thus guarantee progress and eventually loop termination */
-        size_t middle_idx = start_idx + ((end_idx - start_idx) / 2);
-
-        if (vptr_start > rtcell_get_vpn_end_helper(rt[middle_idx])) {
-            /* End address is lower => want to continue search after current cell */
-            start_idx = middle_idx + 1;
-        } else if (vptr_start < rtcell_get_vpn_start(rt[middle_idx])) {
-            /* Start address is higher => want to continue search before current cell */
-            end_idx = middle_idx;
-        } else {
-            /* Found the cell => end search */
-            start_idx = middle_idx;
-            break;
-        }
-    }
-
-    rtcell_t cell = rt[start_idx];
+    rtcell_t cell = rt[cell_index];
     if (unlikely(!(vptr_start == rtcell_get_vpn_start(cell)
                    && vptr_end == rtcell_get_vpn_end_helper(cell)
                    && paddr == rtcell_get_ppn(cell)))) {
@@ -1095,12 +1054,16 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
         have it mapped. Otherwise, unmapping only works if no SecDiv has R/W/X access
         and the valid bit set. */
     if (!brute) {
+        secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+        rt_parameters_t params = get_rt_parameters(rt);
+        uint8_t *perms = (uint8_t *)(rt) + (64 * params.S);
+
         /* Check whether the range is still accessible to any SecDiv other than the
         one that requested the unmapping or the kernel */
         for (secdivid_t curr_secdiv = 1; curr_secdiv < params.M; curr_secdiv++) {
             if (curr_secdiv != secdiv_id) {
                 uint8_t *curr_perms_ptr = perms + (64 * params.T * curr_secdiv);
-                rtperm_t curr_perms = rtperm_from_uint8(curr_perms_ptr[start_idx]);
+                rtperm_t curr_perms = rtperm_from_uint8(curr_perms_ptr[cell_index]);
 
                 if (rtperm_get_valid(curr_perms)
                     && (rtperm_get_read(curr_perms)
@@ -1109,9 +1072,9 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
                     /* Cell is valid and actually accessible by another SecDiv
                        => shouldn't unmap, invalidate instead */
                     uint8_t *secdiv_perms_ptr = perms + (64 * params.T * secdiv_id);
-                    rtperm_t cell_perms = rtperm_from_uint8(secdiv_perms_ptr[start_idx]);
+                    rtperm_t cell_perms = rtperm_from_uint8(secdiv_perms_ptr[cell_index]);
                     cell_perms = rtperm_set_valid(cell_perms, 0);
-                    secdiv_perms_ptr[start_idx] = rtperm_to_uint8(cell_perms);
+                    secdiv_perms_ptr[cell_index] = rtperm_to_uint8(cell_perms);
 
                     /* Make sure the invalidation is propagated to memory */
                     sfence();
@@ -1122,7 +1085,7 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
     }
     /* We arrive here if either brute unmapping was chosen or the range is not mapped into
         any other SecDiv => unmap the range, i.e., remove it from the range table */
-    rt_delete_cell(rt, start_idx);
+    rt_delete_cell(rt, cell_index);
     /* Make sure the unmapping is propagated to memory */
     sfence();
     /* There can only be one range with those exact parameters (virtual and physical addresses), so stop iterating when we found it */
@@ -1748,7 +1711,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
                 word_t mapped_vaddr = cap_range_cap_get_capRMappedAddress(cap);
                 if (unlikely(mapped_vaddr != vaddr)) {
                     userError("RISCVRangeMap: Attempt to map range at multiple addresses");
-                    current_syscall_error.type = seL4_InvalidCapability;
+                    current_syscall_error.type = seL4_InvalidArgument;
                     current_syscall_error.invalidArgumentNumber = 0;
                     return EXCEPTION_SYSCALL_ERROR;
                 }
@@ -2107,10 +2070,10 @@ void Arch_userStackTrace(tcb_t *tptr)
 
     for (int i = 0; i < CONFIG_USER_STACK_TRACE_LENGTH; i++) {
         word_t address = sp + (i * sizeof(word_t));
-        lookupRTCell_ret_t ret = lookupRTCell(vspace_root, address);
-        if (rtperm_get_valid(rtperm_from_uint8(secdiv_perms[ret.rtSlotIndex]))) {
-            pptr_t pptr = (pptr_t)(getPPtrFromHWRTCell(vspace_root + ret.rtSlotIndex));
-            word_t *value = (word_t *)((word_t)pptr + (address & MASK(ret.rSizeBits)));
+        rtIndex_t cell_index = lookupRTCell(vspace_root, address);
+        if (rtperm_get_valid(rtperm_from_uint8(secdiv_perms[cell_index]))) {
+            pptr_t pptr = (pptr_t)(getPPtrFromHWRTCell(vspace_root + cell_index));
+            word_t *value = (word_t *)((word_t)pptr + (address & MASK(seL4_MinRangeBits)));
             printf("0x%lx: 0x%lx\n", (long) address, (long) *value);
         } else {
             printf("0x%lx: INVALID\n", (long) address);

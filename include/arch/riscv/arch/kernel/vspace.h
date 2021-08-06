@@ -40,12 +40,7 @@ struct lookupPTSlot_ret {
 typedef struct lookupPTSlot_ret lookupPTSlot_ret_t;
 
 #ifdef CONFIG_RISCV_SECCELL
-struct lookupRTCell_ret {
-    word_t rtSlotIndex;
-    word_t rSizeBits;
-};
-
-typedef struct lookupRTCell_ret lookupRTCell_ret_t;
+typedef word_t rtIndex_t;
 #endif /* CONFIG_RISCV_SECCELL */
 
 struct findVSpaceForASID_ret {
@@ -61,7 +56,7 @@ void copyGlobalMappings(pte_t *newlvl1pt);
 #endif /* CONFIG_RISCV_SECCELL */
 word_t *PURE lookupIPCBuffer(bool_t isReceiver, tcb_t *thread);
 #ifdef CONFIG_RISCV_SECCELL
-lookupRTCell_ret_t lookupRTCell(rtcell_t *rt, vptr_t vptr);
+rtIndex_t lookupRTCell(rtcell_t *rt, vptr_t vptr);
 #endif /* CONFIG_RISCV_SECCELL */
 lookupPTSlot_ret_t lookupPTSlot(pte_t *lvl1pt, vptr_t vptr);
 exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType);
