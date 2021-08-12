@@ -164,15 +164,6 @@
                 <docref>See <autoref label="ch:vspace"/></docref>
             </description>
         </method>
-        <method id="RISCVRangeTableCompact" name="Compact" manual_label="rangetable_compact">
-            <brief>
-                Compact a range table.
-            </brief>
-            <description>
-                Remove cells marked as deleted from the range table and resize it if necessary, i.e., reduce T and move
-                the permissions around.
-            </description>
-        </method>
         <method id="RISCVRangeTableAddSecDiv" name="AddSecDiv" manual_label="rangetable_addsecdiv">
             <brief>
                 Add a Security Division to the range table.

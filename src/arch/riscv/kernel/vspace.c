@@ -41,8 +41,6 @@ typedef struct {
            S, /* number of 64-byte cache lines for SecCells               */
            T; /* number of 64-byte cache lines for permissions per SecDiv */
 } rt_parameters_t;
-
-static void rt_compact_table(rtcell_t *range_table);
 #endif /* CONFIG_RISCV_SECCELL */
 
 static exception_t performPageGetAddress(void *vbase_ptr);
@@ -108,7 +106,7 @@ static rtcell_t rtcell_new_helper(uint64_t vpn_start, uint64_t vpn_end, uint64_t
      */
     size_t split = (sizeof(uint64_t) * 8) - RT_VPN_BITS;
     /* New cells are not marked as deleted but marked as valid by default */
-    return rtcell_new(0, 1, ppn, vpn_end >> split, vpn_end & ((1ull << split) - 1), vpn_start);
+    return rtcell_new(1, ppn, vpn_end >> split, vpn_end & ((1ull << split) - 1), vpn_start);
 }
 
 static word_t rtcell_get_vpn_end_helper(rtcell_t cell)
@@ -182,15 +180,50 @@ static void rt_resize_inc(rtcell_t *rt)
 
 static void rt_delete_cell(rtcell_t *range_table, unsigned int index)
 {
-    /* Mark cell as deleted */
-    rtcell_ptr_set_deleted(range_table + index, 1);
-
-    /* Blank permissions to the cell */
     rt_parameters_t params = get_rt_parameters(range_table);
     uint8_t *perms = (uint8_t *)(range_table) + (64 * params.S);
-    for (secdivid_t i = 0; i < params.M; i++) {
-        uint8_t *secdiv_perms = perms + (64 * params.T * i);
-        secdiv_perms[index] = 0;
+
+    /* Phase 1: remove cell and permissions */
+    /* Amount of memory to shift back to overwrite the cell to delete */
+    size_t length = (params.N - (index + 1)) * sizeof(rtcell_t);
+    /* Overwrite the deleted cell by shifting subsequent cells */
+    memcpy((void *)(range_table + index), (void *)(range_table + index + 1), length);
+    memset((void *)(range_table + params.N - 1), 0, sizeof(rtcell_t));
+
+    /* Amount of memory to shift back to overwrite the permissions to delete */
+    length = (params.N - (index + 1));
+    for (secdivid_t secdiv = 0; secdiv < params.M; secdiv++) {
+        uint8_t *secdiv_perms = perms + (64 * params.T * secdiv);
+        /* Overwrite permissions for deleted cell by shifting subsequent permissions */
+        memcpy((void *)(secdiv_perms + index), (void *)(secdiv_perms + index + 1), length);
+        secdiv_perms[params.N - 1] = 0;
+    }
+
+    /* Deleted cell and permissions => update cell count */
+    params.N--;
+    rtmeta_ptr_set_N(RT_META_PTR(range_table), params.N);
+
+    /* Phase 2: resize range table */
+    size_t new_T = ROUND_UP(params.N, 6) / 64;
+    rt_parameters_t new_params = {
+        .S = new_T * 16,
+        .T = new_T
+    };
+    /* Only resize if it is even necessary */
+    if (new_params.T != params.T) {
+        for (secdivid_t secdiv = 0; secdiv < params.M; secdiv++) {
+            uint8_t *new_perms = (uint8_t *)(range_table) + (64 * new_params.S) + (64 * new_params.T * secdiv);
+            uint8_t *old_perms = (uint8_t *)(range_table) + (64 * params.S) + (64 * params.T * secdiv);
+
+            /* Copy permissions to new location */
+            /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled
+               Also, use new cell count since deleting cells and perms happens before resizing */
+            memcpy(new_perms, old_perms, params.N);
+            /* Clear (now unused) region used by old permissions */
+            memset(old_perms, 0, params.N);
+        }
+        /* Update metacell value for T */
+        rtmeta_ptr_set_T(RT_META_PTR(range_table), new_params.T);
     }
 }
 
@@ -238,75 +271,10 @@ static word_t rt_insert_cell(rtcell_t *rt, rtcell_t cell, rt_parameters_t *param
     return start_idx;
 }
 
-/* Note: Range table compaction cannot be done atomically, i.e., so that all cells and permissions are valid and kernel
-   and hardware switch over at the same time through updating a single value => c.f. assertion in rt_resize_inc */
-static void rt_compact_table(rtcell_t *range_table)
-{
-    rt_parameters_t params = get_rt_parameters(range_table);
-    uint8_t *perms = (uint8_t *)(range_table) + (64 * params.S);
-
-    /* Phase 1: remove cells and permissions */
-    for (unsigned int i = 1; i < params.N; i++) {
-        if (0 != rtcell_get_deleted(range_table[i])) {
-            /* Amount of memory to shift back to overwrite the cell to delete */
-            size_t length = (params.N - (i + 1)) * sizeof(rtcell_t);
-            /* Overwrite the deleted cell by shifting subsequent cells */
-            memcpy((void *)(range_table + i), (void *)(range_table + i + 1), length);
-            memset((void *)(range_table + params.N - 1), 0, sizeof(rtcell_t));
-
-            /* Amount of memory to shift back to overwrite the permissions to delete */
-            length = (params.N - (i + 1));
-            for (secdivid_t secdiv = 0; secdiv < params.M; secdiv++) {
-                uint8_t *secdiv_perms = perms + (64 * params.T * secdiv);
-                /* Overwrite permissions for deleted cell by shifting subsequent permissions */
-                memcpy((void *)(secdiv_perms + i), (void *)(secdiv_perms + i + 1), length);
-                secdiv_perms[params.N - 1] = 0;
-            }
-
-            /* Deleted cell and permissions => update cell count */
-            params.N--;
-            rtmeta_ptr_set_N(RT_META_PTR(range_table), params.N);
-            /* Decrease i because the next cell is now at the location the deleted cell was at */
-            i--;
-        }
-    }
-
-    /* Phase 2: resize range table */
-    size_t new_T = ROUND_UP(params.N, 6) / 64;
-    rt_parameters_t new_params = {
-        .S = new_T * 16,
-        .T = new_T
-    };
-    /* Only resize if it is even necessary */
-    if (new_params.T != params.T) {
-        for (secdivid_t secdiv = 0; secdiv < params.M; secdiv++) {
-            uint8_t *new_perms = (uint8_t *)(range_table) + (64 * new_params.S) + (64 * new_params.T * secdiv);
-            uint8_t *old_perms = (uint8_t *)(range_table) + (64 * params.S) + (64 * params.T * secdiv);
-
-            /* Copy permissions to new location */
-            /* Note: permissions are stored as uint8_t, copy size thus doesn't have to be scaled
-               Also, use new cell count since deleting cells and perms happens before resizing */
-            memcpy(new_perms, old_perms, params.N);
-            /* Clear (now unused) region used by old permissions */
-            memset(old_perms, 0, params.N);
-        }
-        /* Update metacell value for T */
-        rtmeta_ptr_set_T(RT_META_PTR(range_table), new_params.T);
-    }
-}
-
 static bool_t rtcell_is_mapped(rtcell_t *range_table, word_t vaddr)
 {
     rtIndex_t cell_index = lookupRTCell(range_table, vaddr);
-
-    if (cell_index != 0 && !rtcell_get_deleted(range_table[cell_index])) {
-        /* Found cell which isn't marked as deleted => valid mapping exists */
-        return true;
-    } else {
-        /* Vaddr was either not mapped into the address space in any cell so far or if it was,
-           the cell was marked as deleted */
-        return false;
-    }
+    return (cell_index != 0);
 }
 #endif /* CONFIG_RISCV_SECCELL */
 
@@ -1586,14 +1554,6 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             slot_cap = cap_range_table_cap_set_capRTIsMapped(slot_cap, false);
             cte->cap = slot_cap;
 
-            return EXCEPTION_NONE;
-        }
-
-        case RISCVRangeTableCompact: {
-            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
-            rt_compact_table(rt);
-
-            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
             return EXCEPTION_NONE;
         }
 
