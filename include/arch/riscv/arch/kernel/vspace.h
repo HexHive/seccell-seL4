@@ -66,7 +66,7 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr);
 void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bool_t brute);
 void invalidateRange(asid_t asid, vptr_t vptr, pptr_t pptr);
 #endif /* CONFIG_RISCV_SECCELL */
-void deleteASID(asid_t asid, pte_t *vspace);
+void deleteASID(asid_t asid, vspace_root_t *vspace);
 void deleteASIDPool(asid_t asid_base, asid_pool_t *pool);
 bool_t CONST isValidVTableRoot(cap_t cap);
 exception_t checkValidIPCBuffer(vptr_t vptr, cap_t cap);

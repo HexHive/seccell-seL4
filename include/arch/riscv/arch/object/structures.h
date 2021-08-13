@@ -20,8 +20,14 @@
 
 #define tcbArchCNodeEntries tcbCNodeEntries
 
+#ifdef CONFIG_RISCV_SECCELL
+typedef rtcell_t vspace_root_t;
+#else
+typedef pte_t vspace_root_t;
+#endif /* CONFIG_RISCV_SECCELL */
+
 struct asid_pool {
-    pte_t *array[BIT(asidLowBits)];
+    vspace_root_t *array[BIT(asidLowBits)];
 };
 
 typedef struct asid_pool asid_pool_t;
@@ -43,12 +49,6 @@ enum vm_rights {
     VMReadWrite = 3
 };
 typedef word_t vm_rights_t;
-
-#ifdef CONFIG_RISCV_SECCELL
-typedef rtcell_t vspace_root_t;
-#else
-typedef pte_t vspace_root_t;
-#endif /* CONFIG_RISCV_SECCELL */
 
 /* Generic fastpath.c code expects pde_t for stored_hw_asid
  * that's a workaround in the time being.

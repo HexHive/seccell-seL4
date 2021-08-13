@@ -101,6 +101,34 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
     finaliseCap_ret_t fc_ret;
 
     switch (cap_get_capType(cap)) {
+#ifdef CONFIG_RISCV_SECCELL
+    case cap_range_cap:
+        /* Force unmapping for any SecDiv since we're finalising the capability to it */
+        if (cap_range_cap_get_capRMappedASID(cap) != asidInvalid) {
+            unmapRange(cap_range_cap_get_capRMappedASID(cap),
+                       cap_range_cap_get_capRMappedAddress(cap),
+                       cap_range_cap_get_capRMappedAddress(cap) +
+                           (cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits) - 1,
+                       cap_range_cap_get_capRBasePtr(cap),
+                       true);
+        }
+        break;
+    case cap_range_table_cap:
+        if (final && cap_range_table_cap_get_capRTIsMapped(cap)) {
+            /*
+             * RangeTables are always mapped as vspace_root => delete it from
+             * the ASID pool
+             */
+            asid_t asid = cap_range_table_cap_get_capRTMappedASID(cap);
+            findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+            /* TODO: Remove PTE_PTR casts when rtcell_t pointers can also be passed */
+            if (find_ret.status == EXCEPTION_NONE && RT_PTR(find_ret.vspace_root) == rt) {
+                deleteASID(asid, rt);
+            }
+        }
+        break;
+#else
     case cap_frame_cap:
 
         if (cap_frame_cap_get_capFMappedASID(cap)) {
@@ -126,33 +154,6 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
                 deleteASID(asid, pte);
             } else {
                 unmapPageTable(asid, cap_page_table_cap_get_capPTMappedAddress(cap), pte);
-            }
-        }
-        break;
-#ifdef CONFIG_RISCV_SECCELL
-    case cap_range_cap:
-        /* Force unmapping for any SecDiv since we're finalising the capability to it */
-        if (cap_range_cap_get_capRMappedASID(cap) != asidInvalid) {
-            unmapRange(cap_range_cap_get_capRMappedASID(cap),
-                       cap_range_cap_get_capRMappedAddress(cap),
-                       cap_range_cap_get_capRMappedAddress(cap) +
-                           (cap_range_cap_get_capRSize(cap) << seL4_MinRangeBits) - 1,
-                       cap_range_cap_get_capRBasePtr(cap),
-                       true);
-        }
-        break;
-    case cap_range_table_cap:
-        if (final && cap_range_table_cap_get_capRTIsMapped(cap)) {
-            /*
-             * RangeTables are always mapped as vspace_root => delete it from
-             * the ASID pool
-             */
-            asid_t asid = cap_range_table_cap_get_capRTMappedASID(cap);
-            findVSpaceForASID_ret_t find_ret = findVSpaceForASID(asid);
-            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
-            /* TODO: Remove PTE_PTR casts when rtcell_t pointers can also be passed */
-            if (find_ret.status == EXCEPTION_NONE && RT_PTR(find_ret.vspace_root) == rt) {
-                deleteASID(asid, PTE_PTR(rt));
             }
         }
         break;

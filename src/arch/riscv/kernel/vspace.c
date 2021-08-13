@@ -663,7 +663,7 @@ BOOT_CODE void activate_kernel_vspace(void)
 BOOT_CODE void write_it_asid_pool(cap_t it_ap_cap, cap_t it_lvl1pt_cap)
 {
     asid_pool_t *ap = ASID_POOL_PTR(pptr_of_cap(it_ap_cap));
-    ap->array[IT_ASID] = PTE_PTR(pptr_of_cap(it_lvl1pt_cap));
+    ap->array[IT_ASID] = VR_PTR(pptr_of_cap(it_lvl1pt_cap));
     riscvKSASIDTable[IT_ASID >> asidLowBits] = ap;
 }
 
@@ -899,13 +899,12 @@ static exception_t performASIDPoolInvocation(asid_t asid, asid_pool_t *poolPtr, 
 
     copyGlobalMappings(regionBase);
 
-    /* TODO: Remove cast => make array a rtcell_t in case of SecCells */
-    poolPtr->array[asid & MASK(asidLowBits)] = PTE_PTR(regionBase);
+    poolPtr->array[asid & MASK(asidLowBits)] = regionBase;
 
     return EXCEPTION_NONE;
 }
 
-void deleteASID(asid_t asid, pte_t *vspace)
+void deleteASID(asid_t asid, vspace_root_t *vspace)
 {
     asid_pool_t *poolPtr;
 
@@ -1882,15 +1881,13 @@ exception_t decodeRISCVMMUInvocation(word_t label, word_t length, cptr_t cptr,
         vspaceCapSlot = current_extra_caps.excaprefs[0];
         vspaceCap = vspaceCapSlot->cap;
 
-        if (unlikely(
-                (cap_get_capType(vspaceCap) != cap_page_table_cap ||
-                 cap_page_table_cap_get_capPTIsMapped(vspaceCap))
 #ifdef CONFIG_RISCV_SECCELL
-                &&
-                (cap_get_capType(vspaceCap) != cap_range_table_cap ||
-                 cap_range_table_cap_get_capRTIsMapped(vspaceCap))
+        if(unlikely(cap_get_capType(vspaceCap) != cap_range_table_cap ||
+                    cap_range_table_cap_get_capRTIsMapped(vspaceCap))) {
+#else
+        if (unlikely(cap_get_capType(vspaceCap) != cap_page_table_cap ||
+                     cap_page_table_cap_get_capPTIsMapped(vspaceCap))) {
 #endif /* CONFIG_RISCV_SECCELL */
-           )) {
             userError("RISCVASIDPool: Invalid vspace root.");
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 1;
