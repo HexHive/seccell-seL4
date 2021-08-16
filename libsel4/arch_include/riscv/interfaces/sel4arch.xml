@@ -127,43 +127,6 @@
         </method>
     </interface>
     <interface name="seL4_RISCV_RangeTable" manual_name="Range Table" cap_description="Capability to the range table to invoke.">
-        <method id="RISCVRangeTableMap" name="Map" manual_label="rangetable_map">
-            <brief>
-                Map a range table at a specific virtual address.
-            </brief>
-            <description>
-                Map the range table object for the provided virtual address.
-            </description>
-            <param dir="in" name="vspace" type="seL4_RISCV_RangeTable">
-                <description>VSpace to map the range table into.</description>
-            </param>
-            <param dir="in" name="vaddr" type="seL4_Word">
-                <description>Virtual address at which to map the range table.</description>
-            </param>
-            <!-- <param dir="in" name="size" type="seL4_Word">
-                <description>Size of the range table to map.</description>
-            </param>
-            <param dir="in" name="paddr" type="seL4_Word">
-                <description>Physical address at which to map the range table.</description>
-            </param>
-            <param dir="in" name="secdiv_id" type="seL4_Word">
-                <description>ID of the SecDiv to map the range table into.</description>
-            </param>
-            <param dir="in" name="attr" type="seL4_RISCV_VMAttributes">
-            <description>
-                VM Attributes for the mapping. <docref>Possible values for this type are given
-                in <autoref label="ch:vspace"/>.</docref>
-            </description>
-            </param> -->
-        </method>
-        <method id="RISCVRangeTableUnmap" name="Unmap" manual_label="rangetable_unmap">
-            <brief>
-                Unmap a range table.
-            </brief>
-            <description>
-                <docref>See <autoref label="ch:vspace"/></docref>
-            </description>
-        </method>
         <method id="RISCVRangeTableAddSecDiv" name="AddSecDiv" manual_label="rangetable_addsecdiv">
             <brief>
                 Add a Security Division to the range table.
