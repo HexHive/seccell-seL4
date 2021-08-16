@@ -887,6 +887,7 @@ static exception_t performASIDPoolInvocation(asid_t asid, asid_pool_t *poolPtr, 
     cap_t cap = vspaceCapSlot->cap;
 #ifdef CONFIG_RISCV_SECCELL
     rtcell_t *regionBase = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+    cap = cap_range_table_cap_set_capRTMappedASID(cap, asid);
     cap = cap_range_table_cap_set_capRTMappedAddress(cap, 0);
     cap = cap_range_table_cap_set_capRTIsMapped(cap, 1);
 #else
