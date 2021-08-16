@@ -888,6 +888,8 @@ static exception_t performASIDPoolInvocation(asid_t asid, asid_pool_t *poolPtr, 
 #ifdef CONFIG_RISCV_SECCELL
     rtcell_t *regionBase = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
     cap = cap_range_table_cap_set_capRTMappedASID(cap, asid);
+    /* TODO: Figure out whether RTMappedAddress should remain in the code or not => it is set to 0 upon initialization
+       here and never actually used (artifact from mirroring the page table code) */
     cap = cap_range_table_cap_set_capRTMappedAddress(cap, 0);
     cap = cap_range_table_cap_set_capRTIsMapped(cap, 1);
 #else
