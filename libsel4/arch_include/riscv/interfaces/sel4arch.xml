@@ -143,15 +143,15 @@
             </return>
             <param dir="out" name="id" type="seL4_Word"/>
         </method>
-        <method id="RISCVRangeTableRemoveSecDiv" name="RemoveSecDiv" manual_label="rangetable_removesecdiv">
+        <method id="RISCVRangeTableRevokeSecDiv" name="RevokeSecDiv" manual_label="rangetable_RevokeSecDiv">
             <brief>
-                Remove a Security Division from the range table.
+                Revokes all permissions a Security Division has in the range table.
             </brief>
             <description>
-                Remove a Security Division from the range table by blanking all of its permissions.
+                Revoke access for a Security Division in the range table by blanking all of its permissions.
             </description>
             <param dir="in" name="id" type="seL4_Word">
-                <description>ID of the SecDiv to remove.</description>
+                <description>ID of the SecDiv to revoke.</description>
             </param>
         </method>
     </interface>

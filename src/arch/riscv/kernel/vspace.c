@@ -1454,7 +1454,7 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             return EXCEPTION_NONE;
         }
 
-        case RISCVRangeTableRemoveSecDiv: {
+        case RISCVRangeTableRevokeSecDiv: {
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
             rt_parameters_t params = get_rt_parameters(rt);
 
