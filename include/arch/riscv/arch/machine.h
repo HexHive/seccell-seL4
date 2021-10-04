@@ -220,9 +220,6 @@ static inline void setVSpaceRoot(paddr_t addr, asid_t asid)
                            addr >> seL4_PageBits); /* PPN */
 
     write_satp(satp.words[0]);
-#ifdef CONFIG_RISCV_SECCELL
-    write_urid(asid);
-#endif /* CONFIG_RISCV_SECCELL */
 
     /* Order read/write operations */
 #ifdef ENABLE_SMP_SUPPORT
