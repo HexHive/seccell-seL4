@@ -1069,12 +1069,23 @@ void setVMRoot(tcb_t *tcb)
     asid_t asid;
 #ifdef CONFIG_RISCV_SECCELL
     rtcell_t *rt;
-#endif /* CONFIG_RISCV_SECCELL */
+#else
     pte_t *lvl1pt;
     findVSpaceForASID_ret_t find_ret;
+#endif /* CONFIG_RISCV_SECCELL */
 
     threadRoot = TCB_PTR_CTE_PTR(tcb, tcbVTable)->cap;
+#ifdef CONFIG_RISCV_SECCELL
+    if (cap_get_capType(threadRoot) == cap_range_table_cap) {
+        rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(threadRoot));
 
+        asid = cap_range_table_cap_get_capRTMappedASID(threadRoot);
+
+        setVSpaceRoot(addrFromPPtr(rt), asid);
+    } else {
+        setVSpaceRoot(kpptr_to_paddr(&kernel_root_rangeTable), 0);
+    }
+#else
     if (cap_get_capType(threadRoot) == cap_page_table_cap) {
         lvl1pt = PTE_PTR(cap_page_table_cap_get_capPTBasePtr(threadRoot));
 
@@ -1086,19 +1097,10 @@ void setVMRoot(tcb_t *tcb)
         }
 
         setVSpaceRoot(addrFromPPtr(lvl1pt), asid);
-    }
-#ifdef CONFIG_RISCV_SECCELL
-    else if (cap_get_capType(threadRoot) == cap_range_table_cap) {
-        rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(threadRoot));
-
-        asid = cap_range_table_cap_get_capRTMappedASID(threadRoot);
-
-        setVSpaceRoot(addrFromPPtr(rt), asid);
-    }
-#endif /* CONFIG_RISCV_SECCELL */
-    else {
+    } else {
         setVSpaceRoot(kpptr_to_paddr(&kernel_root_pageTable), 0);
     }
+#endif /* CONFIG_RISCV_SECCELL */
 }
 
 bool_t CONST isValidVTableRoot(cap_t cap)
