@@ -366,7 +366,7 @@ def init_arch_types(wordsize):
             CapType("seL4_RISCV_RangeTable", wordsize),
             CapType("seL4_RISCV_ASIDControl", wordsize),
             CapType("seL4_RISCV_ASIDPool", wordsize),
-            StructType("seL4_UserContext", wordsize * 32, wordsize),
+            StructType("seL4_UserContext", wordsize * 33, wordsize),
         ]
     }
 

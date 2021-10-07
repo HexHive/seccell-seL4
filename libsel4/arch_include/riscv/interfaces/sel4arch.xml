@@ -41,6 +41,7 @@
             <member name="t5"/>
             <member name="t6"/>
             <member name="tp"/>
+            <member name="urid"/>
     </struct>
     <interface name="seL4_RISCV_PageTable" manual_name="Page Table" cap_description="Capability to the page table to invoke.">
         <method id="RISCVPageTableMap" name="Map" manual_label="pagetable_map">

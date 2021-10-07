@@ -60,6 +60,8 @@ typedef struct seL4_UserContext_ {
     seL4_Word t6;
 
     seL4_Word tp;
+
+    seL4_Word urid;
 } seL4_UserContext;
 
 typedef enum {
