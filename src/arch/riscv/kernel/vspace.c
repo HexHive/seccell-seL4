@@ -1589,6 +1589,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
 
             /* Update cell number in metacell */
             rtmeta_ptr_set_N(RT_META_PTR(rt), params.N);
+            sfence();
 
             /* Update capability */
             cap = cap_range_cap_set_capRMappedASID(cap, asid);
