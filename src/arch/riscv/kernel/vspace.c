@@ -1024,7 +1024,7 @@ void unmapRange(asid_t asid, vptr_t vptr_start, vptr_t vptr_end, pptr_t pptr, bo
         have it mapped. Otherwise, unmapping only works if no SecDiv has R/W/X access
         and the valid bit set. */
     if (!brute) {
-        secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+        secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), URID);
         rt_parameters_t params = get_rt_parameters(rt);
         uint8_t *perms = (uint8_t *)(rt) + (64 * params.S);
 
@@ -1537,7 +1537,7 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
             }
 
             asid_t range_asid = cap_range_cap_get_capRMappedASID(cap);
-            secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), ReturnUID);
+            secdivid_t secdiv_id = getRegister(NODE_STATE(ksCurThread), URID);
 
             if (unlikely(range_asid != asidInvalid)) {
                 /* Range is already mapped */
@@ -1901,7 +1901,7 @@ void Arch_userStackTrace(tcb_t *tptr)
 
 #ifdef CONFIG_RISCV_SECCELL
     /* TODO: SecDiv-based access-control even necessary? I mean, we're in kernel space here... */
-    secdivid_t secdiv_id = getRegister(tptr, ReturnUID);
+    secdivid_t secdiv_id = getRegister(tptr, URID);
     rtcell_t *vspace_root = RT_PTR(pptr_of_cap(threadRoot));
 
     rt_parameters_t params = get_rt_parameters(vspace_root);

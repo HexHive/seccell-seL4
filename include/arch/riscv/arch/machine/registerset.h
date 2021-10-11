@@ -67,7 +67,8 @@ enum _register {
     FaultIP = 33, /* SEPC */
     NextIP = 34,
 #ifdef CONFIG_RISCV_SECCELL
-    ReturnUID = 35,
+    URID = 35,
+
 #endif /* CONFIG_RISCV_SECCELL */
 
     /* TODO: add other user-level CSRs if needed (i.e. to avoid channels) */
@@ -131,7 +132,7 @@ static inline void Arch_initContext(user_context_t *context)
     /* Assumption: initial return ASID is IT_ASID = 1 */
     /* TODO: Actually put a constant here => currently causes include problems */
     /* Also reason about whether this assumption is always true */
-    context->registers[ReturnUID] = 1;
+    context->registers[URID] = 1;
     /* 2 SecDivs on initialization: the global kernel mappings (SecDiv 0) and the new userspace thread (SecDiv 1) */
     context->n_secdivs = 2;
 #endif /* CONFIG_RISCV_SECCELL */
