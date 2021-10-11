@@ -84,6 +84,9 @@ void VISIBLE NORETURN restore_user_context(void)
         /* Get URID */
         LOAD_S "  t1, (35*%[REGSIZE])(t0)\n"
         "csrw urid, t1  \n"
+        /* Get UXID */
+        LOAD_S "  t1, (36*%[REGSIZE])(t0)\n"
+        "csrw uxid, t1  \n"
 #endif /* CONFIG_RISCV_SECCELL */
 
 #ifndef ENABLE_SMP_SUPPORT

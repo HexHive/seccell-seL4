@@ -68,7 +68,7 @@ enum _register {
     NextIP = 34,
 #ifdef CONFIG_RISCV_SECCELL
     URID = 35,
-
+    UXID = 36,
 #endif /* CONFIG_RISCV_SECCELL */
 
     /* TODO: add other user-level CSRs if needed (i.e. to avoid channels) */

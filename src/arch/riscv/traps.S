@@ -98,6 +98,9 @@ trap_entry:
   /* Save URID */
   csrr x1,  urid
   STORE x1, (35*REGBYTES)(t0)
+  /* Save UXID */
+  csrr x1,  uxid
+  STORE x1, (36*REGBYTES)(t0)
 #endif /* CONFIG_RISCV_SECCELL */
 
   /* Save exception PC */
