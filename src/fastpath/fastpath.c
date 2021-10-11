@@ -107,7 +107,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_ARCH_RISCV
     /* Get HW ASID */
 #ifdef CONFIG_RISCV_SECCELL
-    stored_hw_asid.words[0] = getRegister(dest, ReturnUID);
+    stored_hw_asid.words[0] = cap_range_table_cap_get_capRTMappedASID(newVTable);
 #else
     stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
 #endif /* CONFIG_RISCV_SECCELL */
@@ -365,7 +365,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
 #ifdef CONFIG_ARCH_RISCV
 #ifdef CONFIG_RISCV_SECCELL
-    stored_hw_asid.words[0] = getRegister(caller, ReturnUID);
+    stored_hw_asid.words[0] = cap_range_table_cap_get_capRTMappedASID(newVTable);
 #else
     stored_hw_asid.words[0] = cap_page_table_cap_get_capPTMappedASID(newVTable);
 #endif /* CONFIG_RISCV_SECCELL */
