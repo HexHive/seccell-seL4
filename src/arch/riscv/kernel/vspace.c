@@ -1573,19 +1573,21 @@ static exception_t decodeRISCVRangeInvocation(word_t label, word_t length,
 
             rt_parameters_t params = get_rt_parameters(rt);
             params.N++;
-            /* Add new cell */
-            rtcell_t cell = rtcell_new_helper(vaddr >> seL4_PageBits,
-                                              vtop >> seL4_PageBits,
-                                              range_paddr >> seL4_PageBits);
-            word_t index = rt_insert_cell(rt, cell, &params);
 
+            /* Prepare the permissions for the new cell */
             uint8_t *perms_sup = (uint8_t *)(rt) + (64 * params.S);
             uint8_t *perms_secdiv = perms_sup + (64 * params.T * secdiv_id);
             word_t read = RISCVGetReadFromVMRights(vm_rights);
             word_t write = RISCVGetWriteFromVMRights(vm_rights);
             bool_t exec = !vm_attributes_get_riscvExecuteNever(attr);
-            /* Set permissions */
-            perms_sup[index] = perms_secdiv[index] = rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
+            uint8_t new_perms = rtperm_to_uint8(rtperm_new(1, 1, 0, exec, write, read, 1));
+
+            /* Add new cell and set its permissions */
+            rtcell_t cell = rtcell_new_helper(vaddr >> seL4_PageBits,
+                                              vtop >> seL4_PageBits,
+                                              range_paddr >> seL4_PageBits);
+            word_t index = rt_insert_cell(rt, cell, &params);
+            perms_sup[index] = perms_secdiv[index] = new_perms;
 
             /* Update cell number in metacell */
             rtmeta_ptr_set_N(RT_META_PTR(rt), params.N);
