@@ -186,7 +186,8 @@ BOOT_CODE static void init_range_table(void)
                                    1, /* M (only kernel SecDiv)          */
                                    1  /* T (only one cache line for now) */
                                   );
-    *RT_META_PTR(kernel_root_rangeTable) = metacell;
+    rtmeta_t *rt = RT_META_PTR(kernel_root_rangeTable);
+    *rt = metacell;
 }
 #endif /* CONFIG_RISCV_SECCELL */
 
