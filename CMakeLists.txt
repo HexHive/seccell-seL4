@@ -86,16 +86,32 @@ if(KernelArchARM)
     endif()
 endif()
 if(KernelArchRiscV)
+    # Determine if GNU toolchain is used and if yes, whether binutils version >= 2.38
+    if (CMAKE_ASM_COMPILER_ID STREQUAL "GNU")
+        # Not using CMAKE_ASM_COMPILER directly because it is set to ${CROSS_COMPILER_PREFIX}gcc in gcc.cmake
+        # => can't change that easily without messing up the build system
+        execute_process(
+            COMMAND ${CROSS_COMPILER_PREFIX}as --version
+            OUTPUT_VARIABLE _gas_version
+        )
+        if (_gas_version MATCHES "GNU.[Aa]ssembler.*(2\.(3[8-9]|[4-9][0-9])|[3-9])")
+            set(GNUAs238_or_later ON)
+        endif()
+    endif()
+    # Manually enable Zicsr and Zifencei extensions if GNU As version >= 2.38
+    if(GNUAs238_or_later)
+        set(KernelRiscVMachFeatureModifiers "_zicsr_zifencei")
+    endif()
     if(Kernel64)
         if(KernelHaveFPU)
-            string(APPEND common_flags " -march=rv64imafdc")
+            string(APPEND common_flags " -march=rv64imafdc${KernelRiscVMachFeatureModifiers}")
             string(APPEND common_flags " -mabi=lp64d")
         else()
-            string(APPEND common_flags " -march=rv64imac")
+            string(APPEND common_flags " -march=rv64imac${KernelRiscVMachFeatureModifiers}")
             string(APPEND common_flags " -mabi=lp64")
         endif()
     else()
-        string(APPEND common_flags " -march=rv32imac")
+        string(APPEND common_flags " -march=rv32imac${KernelRiscVMachFeatureModifiers}")
         string(APPEND common_flags " -mabi=ilp32")
     endif()
 endif()
