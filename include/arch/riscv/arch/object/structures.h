@@ -77,7 +77,7 @@ typedef pte_t pde_t;
 #define WORD_PTR(r) ((word_t *)(r))
 
 #ifdef CONFIG_RISCV_SECCELL
-/* Helper functions to handle permissions in memory in accordance with
+/* Helper functions to handle permissions/grants in memory in accordance with
    the defined structure (see structures.bf) */
 
 /* Create a permission structure from a byte-sized permission table entry */
@@ -91,6 +91,19 @@ static inline rtperm_t rtperm_from_uint8(uint8_t encoded_perms) {
    words array access from more high-level code */
 static inline uint8_t rtperm_to_uint8(rtperm_t perms) {
     return (uint8_t)perms.words[0];
+}
+
+/* Create a grant structure from a 32-bit-sized grant table entry */
+static inline rtgrant_t rtgrant_from_uint32(uint32_t encoded_grant) {
+    rtgrant_t grant = { .words = {(word_t)encoded_grant} };
+    return grant;
+}
+
+/* Create a 32-bit-sized grant bitstring from a grant structure
+   The main objective here is to hide the underlying structure, i.e., the
+   words array access from more high-level code */
+static inline uint32_t rtgrant_to_uint32(rtgrant_t grant) {
+    return (uint32_t)grant.words[0];
 }
 #endif /* CONFIG_RISCV_SECCELL */
 

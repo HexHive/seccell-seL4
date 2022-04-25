@@ -17,6 +17,7 @@
 #include <linker.h>
 #include <plat/machine/hardware.h>
 #include <machine.h>
+#include <util.h>
 
 /* pointer to the end of boot code/data in kernel image */
 /* need a fake array to get the pointer from the linker script */
@@ -182,12 +183,40 @@ BOOT_CODE static void init_plat(void)
 #ifdef CONFIG_RISCV_SECCELL
 BOOT_CODE static void init_range_table(void)
 {
-    rtmeta_t metacell = rtmeta_new(1, /* N (only metacell)               */
-                                   1, /* M (only kernel SecDiv)          */
-                                   1  /* T (only one cache line for now) */
+    /* Make sure the range table is empty */
+    memzero((void *)kernel_root_rangeTable, sizeof(kernel_root_rangeTable));
+
+    /* Initialize metacell and grant table */
+    const uint32_t N = 1;
+    const uint32_t M = 1;
+    const uint32_t T = 1;
+    const uint32_t R = 32;
+
+    rtmeta_t metacell = rtmeta_new(N, /* N (only metacell)               */
+                                   M, /* M (only kernel SecDiv)          */
+                                   T, /* T (only one cache line for now) */
+                                   R  /* R (max. 32 SecDivs for now)     */
                                   );
     rtmeta_t *rt = RT_META_PTR(kernel_root_rangeTable);
     *rt = metacell;
+
+    rtgrant_t inv_grant = rtgrant_new(0xfffffff, /* Invalid SDID      */
+                                      0b0000     /* Empty permissions */
+                                     );
+
+    uint32_t *grant_table = (uint32_t *)((uint8_t *)kernel_root_rangeTable
+                                         + 64 * sizeof(rtcell_t) * T
+                                         + 64 * R * T
+                                        );
+
+    for (size_t i = 0; i < R; i++) {
+        /* Iterate over SecDivs */
+        for (size_t j = 0; j < 64 * T; j++) {
+            /* Iterate over cells */
+            grant_table[(64 * T * i) + j] = rtgrant_to_uint32(inv_grant);
+        }
+    }
+
 }
 #endif /* CONFIG_RISCV_SECCELL */
 

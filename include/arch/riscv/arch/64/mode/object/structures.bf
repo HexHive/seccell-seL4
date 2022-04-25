@@ -187,7 +187,7 @@ block rtmeta {
     field N                32
     field M                32
     field T                32
-    padding                32
+    field R                32
 }
 
 block rtperm {
@@ -200,6 +200,12 @@ block rtperm {
     field write            1
     field read             1
     field valid            1
+}
+
+block rtgrant {
+    padding 32
+    field sdid             28
+    field perms            4
 }
 
 #include <sel4/arch/shared_types.bf>
