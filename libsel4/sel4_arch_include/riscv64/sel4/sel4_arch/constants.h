@@ -37,8 +37,8 @@
 #define seL4_HugePageBits      30
 #define seL4_TeraPageBits      39
 #define seL4_PageTableBits     12
-#define seL4_VSpaceBits        seL4_PageTableBits
 
+#define seL4_RangeTableBits    15 /* 32 kB (initial) range table size */
 #define seL4_SecCellsPPNBits   44
 #define seL4_SecCellsVPNBits   36
 #define seL4_MinRangeBits      12
@@ -46,6 +46,12 @@
    increased to 39 bits by only storing size at 4k granularity => should we adapt
    the general maximum range size? */
 #define seL4_MaxRangeBits      (seL4_SecCellsVPNBits + seL4_MinRangeBits)
+
+#ifdef CONFIG_RISCV_SECCELL
+#define seL4_VSpaceBits        seL4_RangeTableBits
+#else
+#define seL4_VSpaceBits        seL4_PageTableBits
+#endif /* CONFIG_RISCV_SECCELL */
 
 #define seL4_NumASIDPoolsBits   7
 #define seL4_ASIDPoolIndexBits  9

@@ -26,7 +26,7 @@ extern asid_pool_t *riscvKSASIDTable[BIT(asidHighBits)];
 
 #ifdef CONFIG_RISCV_SECCELL
 /* Kernel permission / range table */
-extern rtcell_t kernel_root_rangeTable[BIT(PT_INDEX_BITS)] VISIBLE;
+extern rtcell_t kernel_root_rangeTable[BIT(RT_SIZE_BITS) / sizeof(rtcell_t)] VISIBLE;
 #endif /* CONFIG_RISCV_SECCELL */
 /* Kernel Page Tables */
 extern pte_t kernel_root_pageTable[BIT(PT_INDEX_BITS)] VISIBLE;
@@ -39,4 +39,3 @@ extern pte_t kernel_image_level2_dev_pt[BIT(PT_INDEX_BITS)];
 #elif defined(CONFIG_KERNEL_LOG_BUFFER)
 extern pte_t kernel_image_level2_log_buffer_pt[BIT(PT_INDEX_BITS)];
 #endif
-

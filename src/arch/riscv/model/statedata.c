@@ -19,7 +19,7 @@ asid_pool_t *riscvKSASIDTable[BIT(asidHighBits)];
 
 #ifdef CONFIG_RISCV_SECCELL
 /* Kernel permission / range table for SecCells */
-rtcell_t kernel_root_rangeTable[BIT(PT_INDEX_BITS)] ALIGN_BSS(BIT(seL4_PageTableBits));
+rtcell_t kernel_root_rangeTable[BIT(RT_SIZE_BITS) / sizeof(rtcell_t)] ALIGN_BSS(BIT(seL4_RangeTableBits));
 #endif /* CONFIG_RISCV_SECCELL */
 
 /* Kernel Page Tables */

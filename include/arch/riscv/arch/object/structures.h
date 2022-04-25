@@ -65,6 +65,7 @@ typedef pte_t pde_t;
 #define PTE_SIZE_BITS   seL4_PageTableEntryBits
 #define PT_INDEX_BITS   seL4_PageTableIndexBits
 
+#define RT_SIZE_BITS    seL4_RangeTableBits
 #define RT_PPN_BITS     seL4_SecCellsPPNBits
 #define RT_VPN_BITS     seL4_SecCellsVPNBits
 #define RT_PTR(r)       ((rtcell_t *)(r))
@@ -209,4 +210,3 @@ static inline bool_t CONST Arch_isCapRevocable(cap_t derivedCap, cap_t srcCap)
 }
 
 #endif /* !__ASSEMBLER__  */
-
