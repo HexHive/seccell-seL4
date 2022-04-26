@@ -39,7 +39,9 @@ typedef struct {
     size_t N, /* number of SecCells                                       */
            M, /* number of SecDivs                                        */
            S, /* number of 64-byte cache lines for SecCells               */
-           T; /* number of 64-byte cache lines for permissions per SecDiv */
+           T, /* number of 64-byte cache lines for permissions per SecDiv */
+           Q, /* number of 64-byte cache lines for permissions            */
+           R; /* upper bound to the number of SecDivs                     */
 } rt_parameters_t;
 #endif /* CONFIG_RISCV_SECCELL */
 
@@ -133,7 +135,9 @@ static rt_parameters_t get_rt_parameters(rtcell_t *range_table)
         .N = rtmeta_ptr_get_N(RT_META_PTR(range_table)),
         .M = rtmeta_ptr_get_M(RT_META_PTR(range_table)),
         .S = rtmeta_ptr_get_T(RT_META_PTR(range_table)) * 16,
-        .T = rtmeta_ptr_get_T(RT_META_PTR(range_table))
+        .T = rtmeta_ptr_get_T(RT_META_PTR(range_table)),
+        .Q = rtmeta_ptr_get_T(RT_META_PTR(range_table)) * rtmeta_ptr_get_R(RT_META_PTR(range_table)),
+        .R = rtmeta_ptr_get_R(RT_META_PTR(range_table))
     };
 
     return params;
