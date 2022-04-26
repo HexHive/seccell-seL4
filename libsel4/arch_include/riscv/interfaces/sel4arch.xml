@@ -144,6 +144,25 @@
             </return>
             <param dir="out" name="id" type="seL4_Word"/>
         </method>
+        <method id="RISCVRangeTableGrantSecDivPermissions" name="GrantSecDivPermissions"
+                manual_label="rangetable_GrantSecDivPermissions">
+            <brief>
+                Grants permissions to a Security Division.
+            </brief>
+            <description>
+                Grant permissions to a Security Division in the range table. The granted permissions need to be a
+                subset of the currently executing SecDiv's permissions.
+            </description>
+            <param dir="in" name="id" type="seL4_Word">
+                <description>ID of the SecDiv to grant permissions to.</description>
+            </param>
+            <param dir="in" name="vaddr" type="seL4_Word">
+                <description>Address to grant the permissions for in the SecDiv.</description>
+            </param>
+            <param dir="in" name="perms" type="seL4_Uint8">
+                <description>Permissions on the given range for the SecDiv.</description>
+            </param>
+        </method>
         <method id="RISCVRangeTableRevokeSecDiv" name="RevokeSecDiv" manual_label="rangetable_RevokeSecDiv">
             <brief>
                 Revokes all permissions a Security Division has in the range table.

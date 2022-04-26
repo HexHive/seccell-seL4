@@ -1460,6 +1460,43 @@ static exception_t decodeRISCVRangeTableInvocation(word_t label, word_t length, 
             return EXCEPTION_NONE;
         }
 
+        case RISCVRangeTableGrantSecDivPermissions: {
+            /* TODO: Add global/per-address-space flag that allows disabling this syscall after a setup phase */
+
+            rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
+            rt_parameters_t params = get_rt_parameters(rt);
+
+            secdivid_t secdiv = getSyscallArg(0, buffer);
+            word_t vaddr = getSyscallArg(1, buffer);
+            uint8_t perms = getSyscallArg(2, buffer);
+
+            if (secdiv > (params.M - 1)) {
+                /* SecDiv ID invalid / too high */
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            rtIndex_t cell_index = lookupRTCell(rt, vaddr);
+            if (unlikely(0 == cell_index)) {
+                /* Didn't find the address in the address space => should never happen */
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            secdivid_t curr_secdiv = getRegister(NODE_STATE(ksCurThread), URID);
+            uint8_t *curr_perms = (uint8_t *)rt + (64 * params.S) + (64 * params.T * curr_secdiv) + cell_index;
+            if (unlikely((*curr_perms | perms) != *curr_perms)) {
+                /* Requesting SecDiv doesn't have the permissions it tries to grant */
+                return EXCEPTION_SYSCALL_ERROR;
+            }
+
+            uint8_t *secdiv_perms = (uint8_t *)rt + (64 * params.S) + (64 * params.T * secdiv) + cell_index;
+            *secdiv_perms = rtperm_to_uint8(rtperm_new(1, 1, 0, 0, 0, 0, 1)) | (perms & 0x0F);
+
+            sfence();
+
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+            return EXCEPTION_NONE;
+        }
+
         case RISCVRangeTableRevokeSecDiv: {
             rtcell_t *rt = RT_PTR(cap_range_table_cap_get_capRTBasePtr(cap));
             rt_parameters_t params = get_rt_parameters(rt);
