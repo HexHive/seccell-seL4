@@ -705,9 +705,7 @@ static findVSpaceForASID_ret_t findVSpaceForASID(asid_t asid)
 #ifdef CONFIG_RISCV_SECCELL
 void copyGlobalMappings(rtcell_t *newRt)
 {
-    /* TODO: calculate amount of memory to copy based on range table parameters
-     * For now, assume it fits into one page */
-    memcpy(newRt, kernel_root_rangeTable, BIT(seL4_PageBits));
+    memcpy(newRt, kernel_root_rangeTable, sizeof(kernel_root_rangeTable));
 }
 #else
 void copyGlobalMappings(pte_t *newLvl1pt)
